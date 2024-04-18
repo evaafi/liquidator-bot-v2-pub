@@ -1,6 +1,7 @@
-import {beginCell, DictionaryValue, Slice} from "@ton/ton";
-import {AssetConfig, AssetData} from "./types";
+import {beginCell, Cell, DictionaryValue, Slice} from "@ton/ton";
+import {AssetConfig, AssetData, MiddlewareData} from "./types";
 import crypto from "crypto";
+import {NFT_ID} from "../../config";
 
 export function createAssetData(): DictionaryValue<AssetData> {
     return {
@@ -87,3 +88,23 @@ export function sha256Hash(input: string): bigint {
 
 export const bigIntMin = (...args) => args.reduce((m, e) => e < m ? e : m);
 export const bigIntMax = (...args) => args.reduce((m, e) => e > m ? e : m);
+
+export async function getMiddlewareData(): Promise<MiddlewareData | undefined> {
+    try {
+        let outputId = await (await fetch('https://api.stardust-mainnet.iotaledger.net/api/indexer/v1/outputs/nft/' + NFT_ID,
+            { headers: { "accept": "application/json" } })).json()
+        // @ts-ignore
+        let resData = await (await fetch('https://api.stardust-mainnet.iotaledger.net/api/core/v2/outputs/' + outputId.items[0],
+            { headers: { "accept": "application/json" } })).json()
+
+        // @ts-ignore
+        const data = JSON.parse(decodeURIComponent(resData.output.features[0].data.replace('0x', '').replace(/[0-9a-f]{2}/g, '%$&')));
+        return {
+            pricesCell: (Cell.fromBoc(Buffer.from(data['packedPrices'], 'hex'))[0]),
+            signature: (Buffer.from(data['signature'], 'hex'))
+        };
+    } catch (error) {
+        console.error(error)
+        return undefined;
+    }
+}

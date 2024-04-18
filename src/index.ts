@@ -27,9 +27,14 @@ async function main(bot: Bot) {
         }
     });
     //mainnet
+    //const tonClient = new TonClient({
+    //    endpoint: rpcEndpoint,
+    //    apiKey: process.env.RPC_API_KEY
+    //});
+    //testnet
     const tonClient = new TonClient({
         endpoint: rpcEndpoint,
-        apiKey: process.env.RPC_API_KEY
+        apiKey: process.env.TONCENTER_API_KEY
     });
     const iotaClient = new Client({
         nodes: [iotaEndpoint],
@@ -54,17 +59,29 @@ async function main(bot: Bot) {
     console.log(`Indexer is synced. Waiting 5 sec before starting`);
 
     await sleep(5000);
-    console.log('Starting handleTransactions...')
-    handleTransactions(db, tonApi, tonClient, bot, Address.parse(highloadAddress))
-        .catch(e => {
-            console.log(e);
-            if (JSON.stringify(e).length == 2) {
-                bot.api.sendMessage(serviceChatID, `[Indexer]: ${e}`);
-                return;
-            }
-            bot.api.sendMessage(serviceChatID, `[Indexer]: ${JSON.stringify(e).slice(0, 300)}`);
-        })
-        .finally(() => console.log("Exiting from handleTransactions..."));
+    let handlingTransactions = false;
+    const transactionID = setInterval(async () => {
+        if (handlingTransactions) return;
+        handlingTransactions = true;
+        console.log('Starting handleTransactions...')
+        handleTransactions(db, tonApi, tonClient, bot, Address.parse(highloadAddress))
+            .catch(e => {
+                console.log(e);
+                if (JSON.stringify(e).length == 2) {
+                    bot.api.sendMessage(serviceChatID, `[Indexer]: ${e}`);
+                    return;
+                }
+                bot.api.sendMessage(serviceChatID, `[Indexer]: ${JSON.stringify(e).slice(0, 300)}`);
+            })
+            .finally(() => {
+                handlingTransactions = false;
+                console.log("Exiting from handleTransactions...");
+                bot.api.sendMessage(serviceChatID, `Exiting from handleTransactions`).catch((e) => {
+                    console.log('bot error in handle finally: ');
+                    console.log(e);
+                });
+            });
+    }, 5000);
 
     const validatorID = setInterval(() => {
         validateBalances(db, tonClient, iotaClient)

@@ -8,6 +8,8 @@ export type User = {
     tonPrincipal: bigint,
     usdtPrincipal: bigint,
     usdcPrincipal: bigint,
+    sttonPrincipal: bigint,
+    tstonPrincipal: bigint,
     state: string
 }
 

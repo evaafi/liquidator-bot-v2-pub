@@ -1,9 +1,10 @@
 {
-  "name": "evaa-liquidator-pub",
+  "name": "evaa-liquidator",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
+    "build": "tsc -p .",
     "start": "ts-node src/index.ts",
     "start:dev": "npx nodemon"
   },

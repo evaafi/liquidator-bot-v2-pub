@@ -9,5 +9,7 @@ export type GetResult = {
 export type UserPrincipals = {
     ton: bigint,
     usdt: bigint,
-    usdc: bigint
+    usdc: bigint,
+    stton: bigint,
+    tston: bigint
 }

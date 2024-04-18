@@ -32,6 +32,8 @@ export class MyDatabase {
                 ton_principal VARCHAR NOT NULL,
                 usdt_principal VARCHAR NOT NULL,
                 usdc_principal VARCHAR NOT NULL,
+                stton_principal VARCHAR NOT NULL,
+                tston_principal VARCHAR NOT NULL,
                 state VARCHAR NOT NULL DEFAULT 'active'
             )
       `);
@@ -53,6 +55,7 @@ export class MyDatabase {
                 state VARCHAR NOT NULL DEFAULT 'pending'
             )
         `)
+
     }
 
     async addTransaction(hash: string, utime: number) {
@@ -71,11 +74,11 @@ export class MyDatabase {
     async addUser(
         wallet_address: string, contract_address: string, code_version: number,
         created_at: number, updated_at: number, ton_principal: bigint,
-        usdt_principal: bigint, usdc_principal: bigint) {
+        usdt_principal: bigint, usdc_principal: bigint, stton_principal: bigint, tston_principal: bigint) {
         await this.db.run(`
-            INSERT INTO users(wallet_address, contract_address, code_version, created_at, updated_at, ton_principal, usdt_principal, usdc_principal) 
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-        `, wallet_address, contract_address, code_version, created_at, updated_at, ton_principal.toString(), usdt_principal.toString(), usdc_principal.toString())
+            INSERT INTO users(wallet_address, contract_address, code_version, created_at, updated_at, ton_principal, usdt_principal, usdc_principal, stton_principal, tston_principal)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, wallet_address, contract_address, code_version, created_at, updated_at, ton_principal.toString(), usdt_principal.toString(), usdc_principal.toString(), stton_principal.toString(), tston_principal.toString())
     }
 
     async getUser(contract_address: string): Promise<User> {
@@ -95,20 +98,22 @@ export class MyDatabase {
             tonPrincipal: BigInt(result.ton_principal),
             usdtPrincipal: BigInt(result.usdt_principal),
             usdcPrincipal: BigInt(result.usdc_principal),
+            sttonPrincipal: BigInt(result.stton_principal),
+            tstonPrincipal: BigInt(result.tston_principal),
             state: result.state
         }
     }
 
     async updateUser(contract_address: string, code_version: number, created_at: number, updated_at,
-                     tonPrincipal: bigint, usdtPrincipal: bigint, usdcPrincipal: bigint) {
+                     tonPrincipal: bigint, usdtPrincipal: bigint, usdcPrincipal: bigint, sttonPrincipal: bigint, tstonPrincipal: bigint){
         await this.db.run(`
             UPDATE users 
             SET code_version = ?, 
                 created_at = IIF(created_at > ?, ?, created_at), 
                 updated_at = IIF(updated_at < ?, ?, updated_at), 
-                ton_principal = ?, usdt_principal = ?, usdc_principal = ?
+                ton_principal = ?, usdt_principal = ?, usdc_principal = ?, stton_principal = ?, tston_principal = ?
             WHERE contract_address = ?
-        `, code_version, created_at, created_at, updated_at, updated_at, tonPrincipal.toString(), usdtPrincipal.toString(), usdcPrincipal.toString(), contract_address)
+        `, code_version, created_at, created_at, updated_at, updated_at, tonPrincipal.toString(), usdtPrincipal.toString(), usdcPrincipal.toString(), sttonPrincipal.toString(), tstonPrincipal.toString(), contract_address)
     }
 
     async updateUserTime(contract_address: string, created_at: number, updated_at: number) {
@@ -138,6 +143,8 @@ export class MyDatabase {
                 tonPrincipal: BigInt(row.ton_principal),
                 usdtPrincipal: BigInt(row.usdt_principal),
                 usdcPrincipal: BigInt(row.usdc_principal),
+                sttonPrincipal: BigInt(row.stton_principal),
+                tstonPrincipal: BigInt(row.tston_principal),
                 state: row.state
             });
         }
@@ -227,7 +234,7 @@ export class MyDatabase {
         await this.db.run(`
             UPDATE liquidation_tasks 
             SET state = 'failed', updated_at = ?
-            WHERE state = 'sent' AND ? - updated_at > 60000
+            WHERE state = 'sent' AND ? - updated_at > 180000
         `, Date.now(), Date.now())
 
         const result = await this.db.all(`
@@ -254,8 +261,9 @@ export class MyDatabase {
             SELECT * FROM liquidation_tasks 
             WHERE 
                 (wallet_address = ? AND state = 'pending' AND ? - updated_at < 60000) OR
-                (wallet_address = ? AND state = 'sent' AND ? - updated_at < 75000) OR
-                (wallet_address = ? AND state = 'success' AND ? - updated_at < 10000)
+                (wallet_address = ? AND state = 'sent' AND ? - updated_at < 195000) OR
+                (wallet_address = ? AND state = 'success' AND ? - updated_at < 10000) OR 
+                (wallet_address = ? AND state = 'unsatisfied' AND ? - updated_at < 10000)
         `, walletAddress, Date.now(), walletAddress, Date.now(), walletAddress, Date.now())
         return !!result
     }
@@ -281,5 +289,13 @@ export class MyDatabase {
             DELETE FROM liquidation_tasks 
             WHERE ? - created_at >= 60 * 60 * 24 * 7 * 1000
         `, Date.now())
+    }
+
+    async unsatisfyTask(queryID: bigint) {
+        await this.db.run(`
+            UPDATE liquidation_tasks 
+            SET state = 'unsatisfied', updated_at = ?
+            WHERE query_id = ?
+        `, Date.now(), queryID.toString())
     }
 }

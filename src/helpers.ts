@@ -10,5 +10,9 @@ export function getJettonWallet(assetID: bigint) {
             return jettonWallets.usdt
         case AssetID.usdc:
             return jettonWallets.usdc
+        case AssetID.stton:
+            return jettonWallets.stton
+        case AssetID.tston:
+            return jettonWallets.tston
     }
 }

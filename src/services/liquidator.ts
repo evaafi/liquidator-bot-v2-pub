@@ -12,14 +12,18 @@ import * as fs from "fs";
 type MyBalance = {
     ton: bigint,
     usdt: bigint,
-    usdc: bigint
+    usdc: bigint,
+    stton: bigint,
+    tston: bigint,
 }
 
 export async function getMyBalance(tonClient: TonClient, walletAddress: Address): Promise<MyBalance> {
     const myBalance: MyBalance = {
         ton: 0n,
         usdt: 0n,
-        usdc: 0n
+        usdc: 0n,
+        stton: 0n,
+        tston: 0n,
     };
 
     let attempts = 0;
@@ -28,6 +32,8 @@ export async function getMyBalance(tonClient: TonClient, walletAddress: Address)
             myBalance.ton = await tonClient.getBalance(walletAddress);
             myBalance.usdt = (await tonClient.runMethod(Address.parse(jettonWallets.usdt), 'get_wallet_data')).stack.readBigNumber();
             myBalance.usdc = (await tonClient.runMethod(Address.parse(jettonWallets.usdc), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.stton = (await tonClient.runMethod(Address.parse(jettonWallets.stton), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.tston = (await tonClient.runMethod(Address.parse(jettonWallets.tston), 'get_wallet_data')).stack.readBigNumber();
             break;
         } catch (e) {
             attempts++;
@@ -35,7 +41,7 @@ export async function getMyBalance(tonClient: TonClient, walletAddress: Address)
                 throw e;
             }
             await sleep(500);
-            return;
+            continue
         }
     }
 
@@ -55,13 +61,18 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
     const highloadMessages = Dictionary.empty<number, Cell>();
     let i = 0;
     for (const task of tasks) {
+        console.log(myBalance)
         if ((task.loanAsset === AssetID.ton && myBalance.ton < task.liquidationAmount) ||
             (task.loanAsset === AssetID.usdt && myBalance.usdt < task.liquidationAmount) ||
-            (task.loanAsset === AssetID.usdc && myBalance.usdc < task.liquidationAmount)) {
+            (task.loanAsset === AssetID.usdc && myBalance.usdc < task.liquidationAmount) ||
+            (task.loanAsset === AssetID.stton && myBalance.stton < task.liquidationAmount) ||
+            (task.loanAsset === AssetID.tston && myBalance.tston < task.liquidationAmount)){
 
             if ((task.loanAsset === AssetID.ton && myBalance.ton < 5_000_000_000n) ||
                 (task.loanAsset === AssetID.usdt && myBalance.usdt < 1_000_000n) ||
-                (task.loanAsset === AssetID.usdc && myBalance.usdc < 1_000_000n)) {
+                (task.loanAsset === AssetID.usdc && myBalance.usdc < 1_000_000n) ||
+                (task.loanAsset === AssetID.stton && myBalance.stton < 1_000_000_000n) ||
+                (task.loanAsset === AssetID.tston && myBalance.tston < 1_000_000_000n)){
                 console.log(`Not enough balance for liquidation task ${task.id}`);
                 await bot.api.sendMessage(serviceChatID, `❌ Not enough balance for liquidation task ${task.id}
 
@@ -70,7 +81,9 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
 <b>My balance:</b>
 <b>- TON:</b> ${getFriendlyAmount(myBalance.ton, "TON")}
 <b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}
-<b>- USDC:</b> ${getFriendlyAmount(myBalance.usdc, "USDC")}`, { parse_mode: 'HTML' });
+<b>- USDC:</b> ${getFriendlyAmount(myBalance.usdc, "USDC")}
+<b>- stTON:</b> ${getFriendlyAmount(myBalance.stton, "stTON")}
+<b>- tSTON:</b> ${getFriendlyAmount(myBalance.tston, "tSTON")}`, { parse_mode: 'HTML' });
                 await db.cancelTaskNoBalance(task.id);
                 continue;
             }
@@ -79,11 +92,20 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
                 task.liquidationAmount = myBalance.ton - toNano(1);
             } else if (task.loanAsset === AssetID.usdt) {
                 task.liquidationAmount = myBalance.usdt
-            } else {
+            } else if (task.loanAsset === AssetID.usdc) {
                 task.liquidationAmount = myBalance.usdc
+            } else if (task.loanAsset === AssetID.stton) {
+                task.liquidationAmount = myBalance.stton;
+            } else if (task.loanAsset === AssetID.tston) {
+                task.liquidationAmount = myBalance.tston;
             }
             task.minCollateralAmount = 0n;
         }
+
+        const packedPrices = beginCell()
+            .storeRef(Cell.fromBase64(task.pricesCell))
+            .storeBuffer(Buffer.from(task.signature, 'hex'))
+            .endCell();
 
         let liquidationBody = Cell.EMPTY;
         let amount = 0n;
@@ -140,7 +162,7 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
                 .storeUint(task.minCollateralAmount, 64) // minimal amount of tokens that will suttisfy you to recive back 
                 .storeInt(-1, 2) // can be always -1
                 .storeUint(task.liquidationAmount, 64)
-                .storeRef(Cell.fromBase64(task.pricesCell)) // cell with prices you can get it from our IOTA nft
+                .storeRef(packedPrices) // cell with prices you can get it from our IOTA nft
                 .endCell();
             // const fees = toNano('2')
             amount = task.liquidationAmount + toNano(0.5); // amount of TONs to send / based on that number minus 0.33 (for blockchain fees) evaa sc will calculate an amount of collateral tokens to send back to you (if it will be bigger than minCollateralAmount)
@@ -164,7 +186,7 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
                     .storeUint(task.minCollateralAmount, 64) // minimal amount of tokens that will suttisfy you to recive back  
                     .storeInt(-1, 2) // just -1
                     .storeUint(0, 64)
-                    .storeRef(Cell.fromBase64(task.pricesCell)) // cell with prices you can get it from our IOTA nft
+                    .storeRef(packedPrices) // cell with prices you can get it from our IOTA nft
                     .endCell())
                 .endCell()
             amount = toNano('1'); // tons for tx chain fees  / can be 0.34 ?
@@ -173,6 +195,10 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
                 myBalance.usdt -= task.liquidationAmount;
             } else if (task.loanAsset === AssetID.usdc) {
                 myBalance.usdc -= task.liquidationAmount;
+            } else if (task.loanAsset === AssetID.stton) {
+                myBalance.stton -= task.liquidationAmount;
+            } else if (task.loanAsset === AssetID.tston) {
+                myBalance.tston -= task.liquidationAmount;
             } else {
                 throw new Error("Unknown asset");
             }
@@ -238,7 +264,6 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
 
     while(true) {
         try {
-
             await contract.external(highloadMessageBody);
         } catch(e) {
             console.log(e)

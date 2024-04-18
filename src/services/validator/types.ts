@@ -34,3 +34,8 @@ export type PriceData = {
     dict: Dictionary<bigint, bigint>;
     dataCell: Cell;
 };
+
+export type MiddlewareData = {
+    pricesCell: Cell,
+    signature: Buffer
+}
