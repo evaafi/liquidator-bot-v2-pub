@@ -128,10 +128,11 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
 
 <b>My balance:</b>
 <b>- TON:</b> ${getFriendlyAmount(myBalance.ton, "TON")}
-<b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}
-<b>- USDC:</b> ${getFriendlyAmount(myBalance.usdc, "USDC")}
+<b>- jUSDT:</b> ${getFriendlyAmount(myBalance.jusdt, "jUSDT")}
+<b>- jUSDC:</b> ${getFriendlyAmount(myBalance.jusdc, "jUSDC")}
 <b>- stTON:</b> ${getFriendlyAmount(myBalance.stton, "stTON")}
-<b>- TSTON:</b> ${getFriendlyAmount(myBalance.tston, "tsTON")}`, { parse_mode: 'HTML' });
+<b>- TSTON:</b> ${getFriendlyAmount(myBalance.tston, "tsTON")}
+<b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}`, { parse_mode: 'HTML' });
                     }
                 }
                 else if (op === 0x31f) {
@@ -265,22 +266,25 @@ Available liquidity: ${availableLiquidity}`);
 
                 const userPrincipals: UserPrincipals = {
                     ton: 0n,
-                    usdt: 0n,
-                    usdc: 0n,
+                    jusdt: 0n,
+                    jusdc: 0n,
                     stton: 0n,
                     tston: 0n,
+                    usdt: 0n,
                 };
                 if (principalsDict !== undefined) {
                     if (principalsDict.has(AssetID.ton))
                         userPrincipals.ton = principalsDict.get(AssetID.ton);
-                    if (principalsDict.has(AssetID.usdt))
-                        userPrincipals.usdt = principalsDict.get(AssetID.usdt);
-                    if (principalsDict.has(AssetID.usdc))
-                        userPrincipals.usdc = principalsDict.get(AssetID.usdc);
+                    if (principalsDict.has(AssetID.jusdt))
+                        userPrincipals.jusdt = principalsDict.get(AssetID.jusdt);
+                    if (principalsDict.has(AssetID.jusdc))
+                        userPrincipals.jusdc = principalsDict.get(AssetID.jusdc);
                     if (principalsDict.has(AssetID.stton))
                         userPrincipals.stton = principalsDict.get(AssetID.stton);
                     if (principalsDict.has(AssetID.tston))
                         userPrincipals.tston = principalsDict.get(AssetID.tston);
+                    if (principalsDict.has(AssetID.usdt))
+                        userPrincipals.usdt = principalsDict.get(AssetID.usdt);
                 }
 
                 if (user) {
@@ -292,17 +296,17 @@ Available liquidity: ${availableLiquidity}`);
                         user.codeVersion = codeVersion;
                     await db.updateUser(getAddressFriendly(userContractAddress), user.codeVersion,
                         user.createdAt, user.updatedAt, userPrincipals.ton,
-                        userPrincipals.usdt, userPrincipals.usdc, userPrincipals.stton, userPrincipals.tston);
+                        userPrincipals.jusdt, userPrincipals.jusdc, userPrincipals.stton, userPrincipals.tston, userPrincipals.usdt);
                     // console.log(`Contract ${getAddressFriendly(userContractAddress)} updated`);
                 }
                 else {
                     try {
                         await db.addUser(getAddressFriendly(userAddress), getAddressFriendly(userContractAddress), codeVersion,
-                            utime, utime, userPrincipals.ton, userPrincipals.usdt, userPrincipals.usdc, userPrincipals.stton, userPrincipals.tston);
+                            utime, utime, userPrincipals.ton, userPrincipals.jusdt, userPrincipals.jusdc, userPrincipals.stton, userPrincipals.tston, userPrincipals.usdt);
                         console.log(`Contract ${getAddressFriendly(userContractAddress)} added`);
                     } catch (e) {
                         await db.updateUser(getAddressFriendly(userContractAddress), codeVersion,
-                            utime, utime, userPrincipals.ton, userPrincipals.usdt, userPrincipals.usdc, userPrincipals.stton, userPrincipals.tston);
+                            utime, utime, userPrincipals.ton, userPrincipals.jusdt, userPrincipals.jusdc, userPrincipals.stton, userPrincipals.tston, userPrincipals.usdt);
                         // console.log(`Contract ${getAddressFriendly(userContractAddress)} updated`);
                     }
                 }

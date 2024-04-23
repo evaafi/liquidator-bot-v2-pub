@@ -36,14 +36,16 @@ export async function validateBalances(db: MyDatabase, tonClient: TonClient, iot
             const principalsDict = Dictionary.empty<bigint, bigint>();
             if (user.tonPrincipal !== 0n)
                 principalsDict.set(AssetID.ton, user.tonPrincipal);
-            if (user.usdtPrincipal !== 0n)
-                principalsDict.set(AssetID.usdt, user.usdtPrincipal);
-            if (user.usdcPrincipal !== 0n)
-                principalsDict.set(AssetID.usdc, user.usdcPrincipal);
+            if (user.jusdtPrincipal !== 0n)
+                principalsDict.set(AssetID.jusdt, user.jusdtPrincipal);
+            if (user.jusdcPrincipal !== 0n)
+                principalsDict.set(AssetID.jusdc, user.jusdcPrincipal);
             if (user.sttonPrincipal !== 0n)
                 principalsDict.set(AssetID.stton, user.sttonPrincipal);
             if (user.tstonPrincipal !== 0n)
                 principalsDict.set(AssetID.tston, user.tstonPrincipal);
+            if (user.usdtPrincipal !== 0n)
+                principalsDict.set(AssetID.usdt, user.usdtPrincipal);
 
             let gCollateralValue = 0n;
             let gCollateralAsset = 0n;

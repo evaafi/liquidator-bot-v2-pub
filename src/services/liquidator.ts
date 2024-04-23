@@ -11,29 +11,32 @@ import * as fs from "fs";
 
 type MyBalance = {
     ton: bigint,
-    usdt: bigint,
-    usdc: bigint,
+    jusdt: bigint,
+    jusdc: bigint,
     stton: bigint,
     tston: bigint,
+    usdt: bigint,
 }
 
 export async function getMyBalance(tonClient: TonClient, walletAddress: Address): Promise<MyBalance> {
     const myBalance: MyBalance = {
         ton: 0n,
-        usdt: 0n,
-        usdc: 0n,
+        jusdt: 0n,
+        jusdc: 0n,
         stton: 0n,
         tston: 0n,
+        usdt: 0n,
     };
 
     let attempts = 0;
     while (true) {
         try {
             myBalance.ton = await tonClient.getBalance(walletAddress);
-            myBalance.usdt = (await tonClient.runMethod(Address.parse(jettonWallets.usdt), 'get_wallet_data')).stack.readBigNumber();
-            myBalance.usdc = (await tonClient.runMethod(Address.parse(jettonWallets.usdc), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.jusdt = (await tonClient.runMethod(Address.parse(jettonWallets.jusdt), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.jusdc = (await tonClient.runMethod(Address.parse(jettonWallets.jusdc), 'get_wallet_data')).stack.readBigNumber();
             myBalance.stton = (await tonClient.runMethod(Address.parse(jettonWallets.stton), 'get_wallet_data')).stack.readBigNumber();
             myBalance.tston = (await tonClient.runMethod(Address.parse(jettonWallets.tston), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.usdt = (await tonClient.runMethod(Address.parse(jettonWallets.usdt), 'get_wallet_data')).stack.readBigNumber();
             break;
         } catch (e) {
             attempts++;
@@ -63,16 +66,18 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
     for (const task of tasks) {
         console.log(myBalance)
         if ((task.loanAsset === AssetID.ton && myBalance.ton < task.liquidationAmount) ||
-            (task.loanAsset === AssetID.usdt && myBalance.usdt < task.liquidationAmount) ||
-            (task.loanAsset === AssetID.usdc && myBalance.usdc < task.liquidationAmount) ||
+            (task.loanAsset === AssetID.jusdt && myBalance.jusdt < task.liquidationAmount) ||
+            (task.loanAsset === AssetID.jusdc && myBalance.jusdc < task.liquidationAmount) ||
             (task.loanAsset === AssetID.stton && myBalance.stton < task.liquidationAmount) ||
-            (task.loanAsset === AssetID.tston && myBalance.tston < task.liquidationAmount)){
+            (task.loanAsset === AssetID.tston && myBalance.tston < task.liquidationAmount) ||
+            (task.loanAsset === AssetID.usdt && myBalance.usdt < task.liquidationAmount)) {
 
             if ((task.loanAsset === AssetID.ton && myBalance.ton < 5_000_000_000n) ||
-                (task.loanAsset === AssetID.usdt && myBalance.usdt < 1_000_000n) ||
-                (task.loanAsset === AssetID.usdc && myBalance.usdc < 1_000_000n) ||
+                (task.loanAsset === AssetID.jusdt && myBalance.jusdt < 1_000_000n) ||
+                (task.loanAsset === AssetID.jusdc && myBalance.jusdc < 1_000_000n) ||
                 (task.loanAsset === AssetID.stton && myBalance.stton < 1_000_000_000n) ||
-                (task.loanAsset === AssetID.tston && myBalance.tston < 1_000_000_000n)){
+                (task.loanAsset === AssetID.tston && myBalance.tston < 1_000_000_000n) ||
+                (task.loanAsset === AssetID.usdt && myBalance.usdt < 1_000_000n)) {
                 console.log(`Not enough balance for liquidation task ${task.id}`);
                 await bot.api.sendMessage(serviceChatID, `❌ Not enough balance for liquidation task ${task.id}
 
@@ -80,24 +85,27 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
 <b>Liquidation amount:</b> ${getFriendlyAmount(task.liquidationAmount, getAssetName(task.loanAsset))}
 <b>My balance:</b>
 <b>- TON:</b> ${getFriendlyAmount(myBalance.ton, "TON")}
-<b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}
-<b>- USDC:</b> ${getFriendlyAmount(myBalance.usdc, "USDC")}
+<b>- jUSDT:</b> ${getFriendlyAmount(myBalance.jusdt, "jUSDT")}
+<b>- jUSDC:</b> ${getFriendlyAmount(myBalance.jusdc, "jUSDC")}
 <b>- stTON:</b> ${getFriendlyAmount(myBalance.stton, "stTON")}
-<b>- tSTON:</b> ${getFriendlyAmount(myBalance.tston, "tSTON")}`, { parse_mode: 'HTML' });
+<b>- tSTON:</b> ${getFriendlyAmount(myBalance.tston, "tSTON")}
+<b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}`, { parse_mode: 'HTML' });
                 await db.cancelTaskNoBalance(task.id);
                 continue;
             }
 
             if(task.loanAsset === AssetID.ton) {
                 task.liquidationAmount = myBalance.ton - toNano(1);
-            } else if (task.loanAsset === AssetID.usdt) {
-                task.liquidationAmount = myBalance.usdt
-            } else if (task.loanAsset === AssetID.usdc) {
-                task.liquidationAmount = myBalance.usdc
+            } else if (task.loanAsset === AssetID.jusdt) {
+                task.liquidationAmount = myBalance.jusdt
+            } else if (task.loanAsset === AssetID.jusdc) {
+                task.liquidationAmount = myBalance.jusdc
             } else if (task.loanAsset === AssetID.stton) {
                 task.liquidationAmount = myBalance.stton;
             } else if (task.loanAsset === AssetID.tston) {
                 task.liquidationAmount = myBalance.tston;
+            } else if (task.loanAsset === AssetID.usdt) {
+                task.liquidationAmount = myBalance.usdt;
             }
             task.minCollateralAmount = 0n;
         }
@@ -191,14 +199,16 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
                 .endCell()
             amount = toNano('1'); // tons for tx chain fees  / can be 0.34 ?
             destAddr = getJettonWallet(task.loanAsset);
-            if (task.loanAsset === AssetID.usdt) {
-                myBalance.usdt -= task.liquidationAmount;
-            } else if (task.loanAsset === AssetID.usdc) {
-                myBalance.usdc -= task.liquidationAmount;
+            if (task.loanAsset === AssetID.jusdt) {
+                myBalance.jusdt -= task.liquidationAmount;
+            } else if (task.loanAsset === AssetID.jusdc) {
+                myBalance.jusdc -= task.liquidationAmount;
             } else if (task.loanAsset === AssetID.stton) {
                 myBalance.stton -= task.liquidationAmount;
             } else if (task.loanAsset === AssetID.tston) {
                 myBalance.tston -= task.liquidationAmount;
+            } else if (task.loanAsset === AssetID.usdt) {
+                myBalance.usdt -= task.liquidationAmount
             } else {
                 throw new Error("Unknown asset");
             }

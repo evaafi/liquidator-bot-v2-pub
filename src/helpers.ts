@@ -6,13 +6,15 @@ export function sleep(ms: number) {
 
 export function getJettonWallet(assetID: bigint) {
     switch (assetID) {
-        case AssetID.usdt:
-            return jettonWallets.usdt
-        case AssetID.usdc:
-            return jettonWallets.usdc
+        case AssetID.jusdt:
+            return jettonWallets.jusdt
+        case AssetID.jusdc:
+            return jettonWallets.jusdc
         case AssetID.stton:
             return jettonWallets.stton
         case AssetID.tston:
             return jettonWallets.tston
+        case AssetID.usdt:
+            return jettonWallets.usdt
     }
 }

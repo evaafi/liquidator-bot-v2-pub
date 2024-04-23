@@ -8,8 +8,9 @@ export type GetResult = {
 
 export type UserPrincipals = {
     ton: bigint,
-    usdt: bigint,
-    usdc: bigint,
+    jusdt: bigint,
+    jusdc: bigint,
     stton: bigint,
-    tston: bigint
+    tston: bigint,
+    usdt: bigint
 }

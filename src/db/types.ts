@@ -6,10 +6,11 @@ export type User = {
     createdAt: number,
     updatedAt: number,
     tonPrincipal: bigint,
-    usdtPrincipal: bigint,
-    usdcPrincipal: bigint,
+    jusdtPrincipal: bigint,
+    jusdcPrincipal: bigint,
     sttonPrincipal: bigint,
     tstonPrincipal: bigint,
+    usdtPrincipal: bigint,
     state: string
 }
 

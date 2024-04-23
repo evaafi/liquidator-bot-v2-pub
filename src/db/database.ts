@@ -30,10 +30,11 @@ export class MyDatabase {
                 created_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP NOT NULL,
                 ton_principal VARCHAR NOT NULL,
-                usdt_principal VARCHAR NOT NULL,
-                usdc_principal VARCHAR NOT NULL,
+                jusdt_principal VARCHAR NOT NULL,
+                jusdc_principal VARCHAR NOT NULL,
                 stton_principal VARCHAR NOT NULL,
                 tston_principal VARCHAR NOT NULL,
+                usdt_principal VARCHAR NOT NULL,
                 state VARCHAR NOT NULL DEFAULT 'active'
             )
       `);
@@ -74,11 +75,11 @@ export class MyDatabase {
     async addUser(
         wallet_address: string, contract_address: string, code_version: number,
         created_at: number, updated_at: number, ton_principal: bigint,
-        usdt_principal: bigint, usdc_principal: bigint, stton_principal: bigint, tston_principal: bigint) {
+        jusdt_principal: bigint, jusdc_principal: bigint, stton_principal: bigint, tston_principal: bigint, usdt_principal: bigint) {
         await this.db.run(`
-            INSERT INTO users(wallet_address, contract_address, code_version, created_at, updated_at, ton_principal, usdt_principal, usdc_principal, stton_principal, tston_principal)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, wallet_address, contract_address, code_version, created_at, updated_at, ton_principal.toString(), usdt_principal.toString(), usdc_principal.toString(), stton_principal.toString(), tston_principal.toString())
+            INSERT INTO users(wallet_address, contract_address, code_version, created_at, updated_at, ton_principal, jusdt_principal, jusdc_principal, stton_principal, tston_principal, usdt_principal)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, wallet_address, contract_address, code_version, created_at, updated_at, ton_principal.toString(), jusdt_principal.toString(), jusdc_principal.toString(), stton_principal.toString(), tston_principal.toString(), usdt_principal.toString())
     }
 
     async getUser(contract_address: string): Promise<User> {
@@ -96,24 +97,25 @@ export class MyDatabase {
             createdAt: result.created_at,
             updatedAt: result.updated_at,
             tonPrincipal: BigInt(result.ton_principal),
-            usdtPrincipal: BigInt(result.usdt_principal),
-            usdcPrincipal: BigInt(result.usdc_principal),
+            jusdtPrincipal: BigInt(result.jusdt_principal),
+            jusdcPrincipal: BigInt(result.jusdc_principal),
             sttonPrincipal: BigInt(result.stton_principal),
             tstonPrincipal: BigInt(result.tston_principal),
+            usdtPrincipal: BigInt(result.usdt_principal),
             state: result.state
         }
     }
 
     async updateUser(contract_address: string, code_version: number, created_at: number, updated_at,
-                     tonPrincipal: bigint, usdtPrincipal: bigint, usdcPrincipal: bigint, sttonPrincipal: bigint, tstonPrincipal: bigint){
+                     tonPrincipal: bigint, jusdtPrincipal: bigint, jusdcPrincipal: bigint, sttonPrincipal: bigint, tstonPrincipal: bigint, usdtPrincipal: bigint){
         await this.db.run(`
             UPDATE users 
             SET code_version = ?, 
                 created_at = IIF(created_at > ?, ?, created_at), 
                 updated_at = IIF(updated_at < ?, ?, updated_at), 
-                ton_principal = ?, usdt_principal = ?, usdc_principal = ?, stton_principal = ?, tston_principal = ?
+                ton_principal = ?, jusdt_principal = ?, jusdc_principal = ?, stton_principal = ?, tston_principal = ?, usdt_principal = ?
             WHERE contract_address = ?
-        `, code_version, created_at, created_at, updated_at, updated_at, tonPrincipal.toString(), usdtPrincipal.toString(), usdcPrincipal.toString(), sttonPrincipal.toString(), tstonPrincipal.toString(), contract_address)
+        `, code_version, created_at, created_at, updated_at, updated_at, tonPrincipal.toString(), jusdtPrincipal.toString(), jusdcPrincipal.toString(), sttonPrincipal.toString(), tstonPrincipal.toString(), usdtPrincipal.toString(), contract_address)
     }
 
     async updateUserTime(contract_address: string, created_at: number, updated_at: number) {
@@ -141,10 +143,11 @@ export class MyDatabase {
                 createdAt: row.created_at,
                 updatedAt: row.updated_at,
                 tonPrincipal: BigInt(row.ton_principal),
-                usdtPrincipal: BigInt(row.usdt_principal),
-                usdcPrincipal: BigInt(row.usdc_principal),
+                jusdtPrincipal: BigInt(row.jusdt_principal),
+                jusdcPrincipal: BigInt(row.jusdc_principal),
                 sttonPrincipal: BigInt(row.stton_principal),
                 tstonPrincipal: BigInt(row.tston_principal),
+                usdtPrincipal: BigInt(row.usdt_principal),
                 state: row.state
             });
         }

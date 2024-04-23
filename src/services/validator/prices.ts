@@ -109,10 +109,10 @@ export async function getPrices(): Promise<PriceData | undefined> {
                     priceDict.set(AssetID.ton, BigInt(serializedPriceData.values[0]) * 10n);
                     break;
                 case '0x5553445400000000000000000000000000000000000000000000000000000000':
-                    priceDict.set(AssetID.usdt, BigInt(serializedPriceData.values[0]) * 10n);
+                    priceDict.set(AssetID.jusdt, BigInt(serializedPriceData.values[0]) * 10n);
                     break;
                 case '0x5553444300000000000000000000000000000000000000000000000000000000':
-                    priceDict.set(AssetID.usdc, BigInt(serializedPriceData.values[0]) * 10n);
+                    priceDict.set(AssetID.jusdc, BigInt(serializedPriceData.values[0]) * 10n);
                     break;
             }
 
