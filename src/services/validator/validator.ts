@@ -82,11 +82,11 @@ export async function validateBalances(db: MyDatabase, tonClient: TonClient, iot
                 const values = [];
                 const collateralAssetConfig = assetConfigDict.get(gCollateralAsset);
                 const loanAssetConfig = assetConfigDict.get(gLoanAsset);
-                const liquidationBonus = loanAssetConfig.liquidationBonus;
+                const liquidationBonus = collateralAssetConfig.liquidationBonus;
                 const collateralDecimal = 10n ** collateralAssetConfig.decimals;
                 const loanDecimal = 10n ** loanAssetConfig.decimals;
-                // values.push(bigIntMax(gCollateralValue / 2n, bigIntMin(gCollateralValue, 100_000_000_000n))
-                //     * loanDecimal * 10000n / liquidationBonus / gLoanAssetPrice);
+                values.push(bigIntMax(gCollateralValue / 2n, bigIntMin(gCollateralValue, 100_000_000_000n))
+                    * loanDecimal * 10000n / liquidationBonus / gLoanAssetPrice);
                 values.push(gCollateralValue / 2n * loanDecimal * 10000n / liquidationBonus / gLoanAssetPrice);
                 values.push(gLoanValue * loanDecimal / gLoanAssetPrice);
                 const liquidationAmount = bigIntMin(...values) as bigint - 5n;

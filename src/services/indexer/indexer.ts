@@ -233,7 +233,7 @@ Available liquidity: ${availableLiquidity}`);
                             console.log(`Problem with user contract ${getAddressFriendly(userContractAddress)}`);
                             break;
                         }
-                        await sleep(1000);
+                        await sleep(2000);
                     } catch (e) {
                         attempts++;
                         if (attempts > 10) {
@@ -246,7 +246,7 @@ Available liquidity: ${availableLiquidity}`);
                             console.log(isAxiosError(e));
                             console.log(e)
                         }
-                        await sleep(1000);
+                        await sleep(2000);
                     }
                 }
                 if (!userDataSuccess) {
@@ -310,7 +310,7 @@ Available liquidity: ${availableLiquidity}`);
                         // console.log(`Contract ${getAddressFriendly(userContractAddress)} updated`);
                     }
                 }
-            }, 3000);
+            }, 60000);
         }
 
         console.log(`Before lt: ${before_lt}`);
