@@ -106,6 +106,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                         extra.loadInt(64); // delta loan principal
                         const loanAmount = extra.loadUintBig(64);
                         extra.loadUint(64); // protocol gift
+                        extra.loadUintBig(64); // user new loan principal
                         extra.loadUintBig(256); // collateral asset id
                         extra.loadUintBig(64); // delta collateral principal
                         const collateralAmount = extra.loadUintBig(64);
