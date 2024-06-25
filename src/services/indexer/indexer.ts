@@ -108,6 +108,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                         extra.loadUint(64); // protocol gift
                         extra.loadUintBig(256); // collateral asset id
                         extra.loadUintBig(64); // delta collateral principal
+                        extra.loadUintBig(64); // something related to collateral, but it's not the actual returned during a liquidation
                         const collateralAmount = extra.loadUintBig(64);
                         await db.liquidateSuccess(queryID);
                         console.log(`Liquidation task (Query ID: ${queryID}) successfully completed`);
