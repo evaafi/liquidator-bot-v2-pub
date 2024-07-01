@@ -88,7 +88,7 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
 <b>- jUSDT:</b> ${getFriendlyAmount(myBalance.jusdt, "jUSDT")}
 <b>- jUSDC:</b> ${getFriendlyAmount(myBalance.jusdc, "jUSDC")}
 <b>- stTON:</b> ${getFriendlyAmount(myBalance.stton, "stTON")}
-<b>- tSTON:</b> ${getFriendlyAmount(myBalance.tston, "tSTON")}
+<b>- tsTON:</b> ${getFriendlyAmount(myBalance.tston, "tsTON")}
 <b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}`, { parse_mode: 'HTML' });
                 await db.cancelTaskNoBalance(task.id);
                 continue;
