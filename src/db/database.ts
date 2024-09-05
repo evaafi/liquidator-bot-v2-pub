@@ -3,10 +3,21 @@ import sqlite3 from 'sqlite3';
 import {Task, User} from "./types";
 import {isTestnet} from "../config";
 
+// tasks time-to-live
+export const TTL = {
+    pending: 60_000,
+    processing: 60_000,
+    sent: 300_000,
+    success: 10_000,
+    unsatisfied: 10_000,
+    insufficient_balance: 300_000,
+}
+
 export class MyDatabase {
     private db: Database;
 
-    constructor() {}
+    constructor() {
+    }
 
     async init() {
         this.db = await open({
@@ -57,6 +68,21 @@ export class MyDatabase {
             )
         `)
 
+        await this.db.run(`
+            CREATE TABLE IF NOT EXISTS swap_tasks(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                token_offer VARCHAR NOT NULL,
+                token_ask VARCHAR NOT NULL,
+                swap_amount VARCHAR NOT NULL,
+                query_id VARCHAR,
+                route_id VARCHAR,
+                state VARCHAR NOT NULL DEFAULT 'pending',
+                status INTEGER NOT NULL DEFAULT 0
+            )
+        `)
+
     }
 
     async addTransaction(hash: string, utime: number) {
@@ -87,7 +113,7 @@ export class MyDatabase {
             SELECT * FROM users WHERE contract_address = ?
         `, contract_address);
 
-        if(!result) return undefined;
+        if (!result) return undefined;
 
         return {
             id: result.id,
@@ -107,7 +133,7 @@ export class MyDatabase {
     }
 
     async updateUser(contract_address: string, code_version: number, created_at: number, updated_at,
-                     tonPrincipal: bigint, jusdtPrincipal: bigint, jusdcPrincipal: bigint, sttonPrincipal: bigint, tstonPrincipal: bigint, usdtPrincipal: bigint){
+                     tonPrincipal: bigint, jusdtPrincipal: bigint, jusdcPrincipal: bigint, sttonPrincipal: bigint, tstonPrincipal: bigint, usdtPrincipal: bigint) {
         await this.db.run(`
             UPDATE users 
             SET code_version = ?, 
@@ -134,7 +160,7 @@ export class MyDatabase {
         `);
 
         const users: User[] = [];
-        for(const row of result) {
+        for (const row of result) {
             users.push({
                 id: row.id,
                 wallet_address: row.wallet_address,
@@ -169,10 +195,10 @@ export class MyDatabase {
             SELECT * FROM liquidation_tasks
             WHERE state = 'pending'
         `);
-        if(!result) return undefined;
+        if (!result) return undefined;
 
         const tasks: Task[] = [];
-        for(const row of result) {
+        for (const row of result) {
             tasks.push({
                 id: row.id,
                 walletAddress: row.wallet_address,
@@ -191,6 +217,14 @@ export class MyDatabase {
         }
 
         return tasks;
+    }
+
+    async takeTask(id: number) {
+        await this.db.run(`
+            UPDATE liquidation_tasks 
+            SET state = 'processing', updated_at = ?
+            WHERE id = ?
+        `, Date.now(), id)
     }
 
     async liquidateSent(id: number) {
@@ -214,7 +248,7 @@ export class MyDatabase {
             SELECT * FROM liquidation_tasks
             WHERE query_id = ?
         `, queryID.toString());
-        if(!result) return undefined;
+        if (!result) return undefined;
 
         return {
             id: result.id,
@@ -237,46 +271,68 @@ export class MyDatabase {
         await this.db.run(`
             UPDATE liquidation_tasks 
             SET state = 'failed', updated_at = ?
-            WHERE state = 'sent' AND ? - updated_at > 180000
-        `, Date.now(), Date.now())
+            WHERE state in ('sent') AND ? - updated_at > ?
+        `, Date.now(), Date.now(), TTL.sent)
 
-        const result = await this.db.all(`
+        await this.db.run(`
+            UPDATE liquidation_tasks 
+            SET state = 'failed', updated_at = ?
+            WHERE state in ('processing') AND ? - updated_at > ?
+        `, Date.now(), Date.now(), TTL.processing)
+
+        return [];
+        // TODO: rethink the blacklisting logic
+
+        // const result = await this.db.all(`
+        //     UPDATE users
+        //     SET state = 'blacklist'
+        //     WHERE (
+        //         SELECT COUNT(*)
+        //         FROM liquidation_tasks
+        //         WHERE liquidation_tasks.wallet_address = users.wallet_address AND state = 'failed'
+        //     ) >= 1 AND state = 'active'
+        //     RETURNING users.wallet_address
+        // `);
+        //
+        // const wallets: string[] = [];
+        // for(const row of result) {
+        //     wallets.push(row.wallet_address);
+        // }
+        //
+        // return wallets;
+    }
+
+    async blacklistUser(walletAddress: string) {
+        await this.db.all(`
             UPDATE users
             SET state = 'blacklist'
-            WHERE (
-                SELECT COUNT(*)
-                FROM liquidation_tasks
-                WHERE liquidation_tasks.wallet_address = users.wallet_address AND state = 'failed'
-            ) >= 1 AND state = 'active'
-            RETURNING users.wallet_address
-        `);
-
-        const wallets: string[] = [];
-        for(const row of result) {
-            wallets.push(row.wallet_address);
-        }
-
-        return wallets;
+            WHERE users.wallet_address = ?   
+        `, walletAddress);
     }
 
     async isTaskExists(walletAddress: string) {
+        const now = Date.now();
         const result = await this.db.get(`
             SELECT * FROM liquidation_tasks 
             WHERE 
-                (wallet_address = ? AND state = 'pending' AND ? - updated_at < 60000) OR
-                (wallet_address = ? AND state = 'sent' AND ? - updated_at < 195000) OR
-                (wallet_address = ? AND state = 'success' AND ? - updated_at < 10000) OR 
-                (wallet_address = ? AND state = 'unsatisfied' AND ? - updated_at < 10000)
-        `, walletAddress, Date.now(), walletAddress, Date.now(), walletAddress, Date.now())
-        return !!result
+                (wallet_address = ? AND state = 'pending' AND ? - updated_at < ${TTL.pending}) OR
+                (wallet_address = ? AND state = 'processing' AND ? - updated_at < ${TTL.processing}) OR
+                (wallet_address = ? AND state = 'sent' AND ? - updated_at < ${TTL.sent}) OR
+                (wallet_address = ? AND state = 'success' AND ? - updated_at < ${TTL.success}) OR 
+                (wallet_address = ? AND state = 'unsatisfied' AND ? - updated_at < ${TTL.unsatisfied}) OR
+                (wallet_address = ? AND state = 'insufficient_balance' AND ? - updated_at < ${TTL.insufficient_balance})
+        `, walletAddress, now, walletAddress, now, walletAddress, now,
+            walletAddress, now, walletAddress, now, walletAddress, now
+        );
+        return !!result;
     }
 
     async cancelOldTasks() {
         await this.db.run(`
             UPDATE liquidation_tasks 
             SET state = 'cancelled', updated_at = ?
-            WHERE state = 'pending' AND ? - created_at > 45000
-        `, Date.now(), Date.now())
+            WHERE state = 'pending' AND ? - created_at > ?
+        `, Date.now(), Date.now(), TTL.pending) // 30sec -> old
     }
 
     async cancelTaskNoBalance(id: number) {
@@ -300,5 +356,12 @@ export class MyDatabase {
             SET state = 'unsatisfied', updated_at = ?
             WHERE query_id = ?
         `, Date.now(), queryID.toString())
+    }
+
+    async addSwapTask(createdAt: number, tokenOffer: bigint, tokenAsk: bigint, swapAmount: bigint) {
+        await this.db.run(`
+            INSERT INTO swap_tasks(created_at, updated_at, token_offer, token_ask, swap_amount) 
+            VALUES(?, ?, ?, ?, ?)
+        `, createdAt, createdAt, tokenOffer.toString(), tokenAsk.toString(), swapAmount.toString())
     }
 }

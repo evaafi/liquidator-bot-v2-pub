@@ -1,96 +1,85 @@
-import { Address } from "@ton/core";
-import { Cell } from "@ton/ton";
-import {sha256Hash} from "./services/validator/helpers";
+import {Address} from "@ton/core";
+import {Cell} from "@ton/ton";
+
+import {sha256Hash} from "./util/crypto";
 
 export const AssetID = {
-    ton: sha256Hash('TON'),
-    jusdt: sha256Hash('jUSDT'),
-    jusdc: sha256Hash('jUSDC'),
-    stton: sha256Hash('stTON'),
-    tston: sha256Hash('tsTON'),
-    usdt: sha256Hash('USDT')
+    TON:            sha256Hash('TON'),
+    USDT:           sha256Hash('USDT'),
+    jUSDT:          sha256Hash('jUSDT'),
+    jUSDC:          sha256Hash('jUSDC'),
+    stTON:          sha256Hash('stTON'),
+    tsTON:          sha256Hash('tsTON'),
+    TONUSDT_DEDUST: sha256Hash('TONUSDT_DEDUST'),
+    TONUSDT_STONFI: sha256Hash('TONUSDT_STONFI'),
+    TON_STORM:      sha256Hash('TON_STORM'),
+    USDT_STORM:     sha256Hash('USDT_STORM'),
+    time:           sha256Hash('time'),
 };
 
-//export const HIGHLOAD_CODE = Cell.fromBase64('te6ccgEBCQEA5QABFP8A9KQT9LzyyAsBAgEgAgMCAUgEBQHq8oMI1xgg0x/TP/gjqh9TILnyY+1E0NMf0z/T//QE0VNggED0Dm+hMfJgUXO68qIH+QFUEIf5EPKjAvQE0fgAf44WIYAQ9HhvpSCYAtMH1DAB+wCRMuIBs+ZbgyWhyEA0gED0Q4rmMQHIyx8Tyz/L//QAye1UCAAE0DACASAGBwAXvZznaiaGmvmOuF/8AEG+X5dqJoaY+Y6Z/p/5j6AmipEEAgegc30JjJLb/JXdHxQANCCAQPSWb6VsEiCUMFMDud4gkzM2AZJsIeKz');
-//
-//// ------------------ Testnet Config ------------------
-//export const evaaMaster = Address.parse('kQBi2jDaq_-Oi62V7u_j_Vr1We8EqC3h0jkhB4Gf4JW741vX');
-//export const rpcEndpoint = 'https://testnet.toncenter.com/api/v2/jsonRPC'
-//export const tonApiEndpoint = 'https://testnet.tonapi.io/';
-//export const isTestnet = true;
-//
-//export const decimals = {
-//    ton: 1_000_000_000n,
-//    jetton: 1_000_000n,
-//    dollar: 100_000_000n
-//};
-//
-//export const jettonWallets = {
-//    usdt: 'kQAj56jyNXX3MdKAbnji56rmrMNciNhf27qbfrACENw-nVtt',
-//    usdc: 'kQDFMVJkWrK6yWxHzcBx3kMUVW9WOe6YsMkAlGJDFtt_YEQn',
-//}
-//
-//export const iotaEndpoint = "https://api.stardust-mainnet.iotaledger.net";
-//export const NFT_ID = "0x98f8eb12127ee205a7b84e6910021e1e65ec5c8d92f89acdffea7be20104e899"
-//
-//export const serviceChatID = -1001901315795;
-//
-//export const highloadAddress = 'kQD49DS0c3eV9MpDKludkTI4O7Vus7v6T9y_9aC25b8iCqsS';
+export const AssetDecimals = {
+    TON:            1_000_000_000n, // 9
+    USDT:           1_000_000n,     // 6
+    jUSDT:          1_000_000n,     // 6
+    jUSDC:          1_000_000n,     // 6
+    tsTON:          1_000_000_000n, // 9
+    stTON:          1_000_000_000n, // 9
+    TONUSDT_DEDUST: 1_000_000_000n, // 9
+    TONUSDT_STONFI: 1_000_000_000n, // 9
+    TON_STORM:      1_000_000_000n, // 9
+    USDT_STORM:     1_000_000_000n, // 9
+};
 
-// ------------------ Testnet Config ------------------
-// export const evaaMaster = Address.parse('EQClWdMebpK90b6imEUreQJ4M3oz8Gqwd3xkVIowR8LDX2S0');
-// export const rpcEndpoint = 'https://testnet.toncenter.com/api/v2/jsonRPC'
-// export const tonApiEndpoint = 'https://testnet.tonapi.io/';
-// export const isTestnet = true;
-//
-// export const decimals = {
-//     ton: 1_000_000_000n,
-//     jetton: 1_000_000n,
-//     dollar: 100_000_000n
-// };
-//
-// export const jettonWallets = {
-//     usdt: 'kQB86FGzO_zH5w41gUqG7vbLuy4-JPTciawvLPRinfka8e6R',
-//     usdc: 'kQCgh_Fs7kOqU54o1U_YI4P5w4_8q1paSkHGT7UzL2Hz5Ws0',
-//     stton: 'kQACl9OYs8ld6J5OIj1h7JczJZJW5qxBxKb415fGW8ZSSSqH'
-// }
-//
-// export const iotaEndpoint = "https://api.stardust-mainnet.iotaledger.net";
-// export const NFT_ID = "0xfb9874544d76ca49c5db9cc3e5121e4c018bc8a2fb2bfe8f2a38c5b9963492f5"
-//
-// export const serviceChatID = -1001901315795;
-//
-// export const highloadAddress = 'kQD49DS0c3eV9MpDKludkTI4O7Vus7v6T9y_9aC25b8iCqsS';
+export const CollateralSelectPriorities = new Map<bigint, number>([
+    [AssetID.USDT,              1],
+    [AssetID.TON,               2],
+    [AssetID.stTON,             3],
+    [AssetID.jUSDT,             4],
+    [AssetID.tsTON,             5],
+    [AssetID.jUSDC,             6],
+    [AssetID.TONUSDT_DEDUST,    7],
+    [AssetID.TONUSDT_STONFI,    8],
+    [AssetID.TON_STORM,         9],
+    [AssetID.USDT_STORM,        10],
+]);
 
+// ------------------ Mainnet Config ------------------
 
-
-// // ------------------ Mainnet Config ------------------
-//
-export const evaaMaster = Address.parse('EQC8rUZqR_pWV1BylWUlPNBzyiTYVoBEmQkMIQDZXICfnuRr');
-export const rpcEndpoint = 'https://tonrpc.sepezho.com/api/v2/jsonRPC'
-export const tonApiEndpoint = 'https://tonapi.io/';
 export const isTestnet = false;
 
-export const decimals = {
-    ton: 1_000_000_000n,
-    jetton: 1_000_000n,
-    dollar: 1_000_000_000n
-};
-
 export const jettonWallets = {
-    jusdt: 'EQA6X8-lL4GOV8unCtzgx0HiQJovggHEniGIPGjB7RBIRR3M',
-    jusdc: 'EQA6mXtvihA1GG57dFCbzI1NsBlMu4iN-iSxbzN_seSlbaVM',
-    stton: 'EQAw_YE5y9U3LFTPtm7peBWKz1PUg77DYlrJ3_NDyQAfab5s',
-    tston: 'EQDdpsEJ2nyPP2W2yzdcM2A4FeU-IQGyxM0omo0U2Yv2DvTB',
-    usdt: "EQD_kMQkK-A9-CQu3CdOnQUDZ2_8bY8Zrh1PvtE3hZpxvdRH"
+    jUSDT: 'EQA6X8-lL4GOV8unCtzgx0HiQJovggHEniGIPGjB7RBIRR3M',
+    jUSDC: 'EQA6mXtvihA1GG57dFCbzI1NsBlMu4iN-iSxbzN_seSlbaVM',
+    stTON: 'EQAw_YE5y9U3LFTPtm7peBWKz1PUg77DYlrJ3_NDyQAfab5s',
+    tsTON: 'EQDdpsEJ2nyPP2W2yzdcM2A4FeU-IQGyxM0omo0U2Yv2DvTB',
+    USDT: 'EQC183ELZmTbdsfRtPmp-SzyRXf0UOV3pdNNwtX2P98z2pQM',
+    // // for LP-pool version
+    // TONUSDT_DEDUST: 'EQD1msA18OaAzYPAVrFKfbxHCl1kxQkzsY7zolgtwAqgUuMP',
+    // TONUSDT_STONFI: 'EQAoXoKRiIx8SDXBXKUHJXfGYXi98a7Pr0UzMOSLz4gely2Z',
+    // TON_STORM: 'EQChlnD11dNt5QpiykF_WMniq8WfsQ8I4n2aFhfknU5eOfbP',
+    // USDT_STORM: 'EQAQnMn2bCY1BcTVqawdblFMh3yw5kkJqiHi52ey-gbL6ofM',
 }
 
-export const iotaEndpoint = "https://api.stardust-mainnet.iotaledger.net";
 export const NFT_ID = "0xfb9874544d76ca49c5db9cc3e5121e4c018bc8a2fb2bfe8f2a38c5b9963492f5"
+export const evaaMaster = Address.parse('EQC8rUZqR_pWV1BylWUlPNBzyiTYVoBEmQkMIQDZXICfnuRr');
+export const rpcEndpoint = 'https://rpc.evaa.finance/api/v2/jsonRPC';
+export const tonApiEndpoint = 'https://tonapi.io/';
 
-export const serviceChatID =-4021802986;
-
+export const serviceChatID = -4021802986;
 export const highloadAddress = 'EQDo27P-CAam_G2xmQd4CxnFYjY2FKPmmKEc8wTCh4c33Mhi';
 
 export const HIGHLOAD_CODE = Cell.fromBase64('te6ccgEBCQEA5QABFP8A9KQT9LzyyAsBAgEgAgMCAUgEBQHq8oMI1xgg0x/TP/gjqh9TILnyY+1E0NMf0z/T//QE0VNggED0Dm+hMfJgUXO68qIH+QFUEIf5EPKjAvQE0fgAf44WIYAQ9HhvpSCYAtMH1DAB+wCRMuIBs+ZbgyWhyEA0gED0Q4rmMQHIyx8Tyz/L//QAye1UCAAE0DACASAGBwAXvZznaiaGmvmOuF/8AEG+X5dqJoaY+Y6Z/p/5j6AmipEEAgegc30JjJLb/JXdHxQANCCAQPSWb6VsEiCUMFMDud4gkzM2AZJsIeKz');
 
+// assets banned from being swapped from
+export const BANNED_ASSETS_FROM = [
+    AssetID.tsTON,
+    AssetID.jUSDC
+];
+// assets banned from being swapped to
+export const BANNED_ASSETS_TO = [
+    AssetID.tsTON,
+    AssetID.jUSDC
+];
+//  lower bound of asset worth to swap
+export const PRICE_ACCURACY = 1_000_000_000n;   // 10**9
+export const MIN_WORTH_SWAP_LIMIT: bigint = 100n * PRICE_ACCURACY; // usd

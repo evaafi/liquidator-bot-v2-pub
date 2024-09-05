@@ -1,20 +1,17 @@
 import {AssetID, jettonWallets} from "./config";
 
-export function sleep(ms: number) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 export function getJettonWallet(assetID: bigint) {
     switch (assetID) {
-        case AssetID.jusdt:
-            return jettonWallets.jusdt
-        case AssetID.jusdc:
-            return jettonWallets.jusdc
-        case AssetID.stton:
-            return jettonWallets.stton
-        case AssetID.tston:
-            return jettonWallets.tston
-        case AssetID.usdt:
-            return jettonWallets.usdt
+        case AssetID.jUSDT: return jettonWallets.jUSDT;
+        case AssetID.jUSDC: return jettonWallets.jUSDC;
+        case AssetID.stTON: return jettonWallets.stTON;
+        case AssetID.tsTON: return jettonWallets.tsTON;
+        case AssetID.USDT: return jettonWallets.USDT;
+        // case AssetID.TONUSDT_DEDUST: return jettonWallets.TONUSDT_DEDUST;
+        // case AssetID.TONUSDT_STONFI: return jettonWallets.TONUSDT_STONFI;
+        // case AssetID.TON_STORM: return jettonWallets.TON_STORM;
+        // case AssetID.USDT_STORM: return jettonWallets.USDT_STORM;
+        default: break;
     }
+    throw (`Unsupported asset id`);
 }

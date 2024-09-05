@@ -1,7 +1,5 @@
-import {beginCell, Cell, DictionaryValue, Slice} from "@ton/ton";
-import {AssetConfig, AssetData, MiddlewareData} from "./types";
-import crypto from "crypto";
-import {NFT_ID} from "../../config";
+import {beginCell, DictionaryValue, Slice} from "@ton/ton";
+import {AssetConfig, AssetData} from "./types";
 
 export function createAssetData(): DictionaryValue<AssetData> {
     return {
@@ -10,7 +8,7 @@ export function createAssetData(): DictionaryValue<AssetData> {
             buidler.storeUint(src.b_rate, 64);
             buidler.storeUint(src.totalSupply, 64);
             buidler.storeUint(src.totalBorrow, 64);
-            buidler.storeUint(src.lastAccural, 32);
+            buidler.storeUint(src.lastAccrual, 32);
             buidler.storeUint(src.balance, 64);
         },
         parse: (src: Slice) => {
@@ -18,9 +16,9 @@ export function createAssetData(): DictionaryValue<AssetData> {
             const bRate = BigInt(src.loadUint(64));
             const totalSupply = BigInt(src.loadUint(64));
             const totalBorrow = BigInt(src.loadUint(64));
-            const lastAccural = BigInt(src.loadUint(32));
+            const lastAccrual = BigInt(src.loadUint(32));
             const balance = BigInt(src.loadUint(64));
-            return { sRate, bRate, totalSupply, totalBorrow, lastAccural, balance };
+            return {sRate, bRate, totalSupply, totalBorrow, lastAccrual, balance};
         },
     };
 }
@@ -76,35 +74,5 @@ export function createAssetConfig(): DictionaryValue<AssetConfig> {
     };
 }
 
-export function sha256Hash(input: string): bigint {
-    const hash = crypto.createHash('sha256');
-    hash.update(input);
-    const hashBuffer = hash.digest();
-    const hashHex = hashBuffer.toString('hex');
-    return BigInt('0x' + hashHex);
-}
-
-
-
 export const bigIntMin = (...args) => args.reduce((m, e) => e < m ? e : m);
 export const bigIntMax = (...args) => args.reduce((m, e) => e > m ? e : m);
-
-export async function getMiddlewareData(): Promise<MiddlewareData | undefined> {
-    try {
-        let outputId = await (await fetch('https://api.stardust-mainnet.iotaledger.net/api/indexer/v1/outputs/nft/' + NFT_ID,
-            { headers: { "accept": "application/json" } })).json()
-        // @ts-ignore
-        let resData = await (await fetch('https://api.stardust-mainnet.iotaledger.net/api/core/v2/outputs/' + outputId.items[0],
-            { headers: { "accept": "application/json" } })).json()
-
-        // @ts-ignore
-        const data = JSON.parse(decodeURIComponent(resData.output.features[0].data.replace('0x', '').replace(/[0-9a-f]{2}/g, '%$&')));
-        return {
-            pricesCell: (Cell.fromBoc(Buffer.from(data['packedPrices'], 'hex'))[0]),
-            signature: (Buffer.from(data['signature'], 'hex'))
-        };
-    } catch (error) {
-        console.error(error)
-        return undefined;
-    }
-}

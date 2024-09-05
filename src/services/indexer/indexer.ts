@@ -1,14 +1,13 @@
 import {MyDatabase} from "../../db/database";
 import {AxiosInstance, AxiosResponse, isAxiosError} from "axios";
-import {AssetID, decimals, evaaMaster, serviceChatID} from "../../config";
-import {getAddressFriendly, getAssetName, getFriendlyAmount, getRequest} from "./helpers";
-import {sleep} from "../../helpers";
+import {AssetID, evaaMaster, serviceChatID} from "../../config";
+import {checkEligibleSwapTask, getAddressFriendly, getAssetName, getFriendlyAmount, getRequest} from "./helpers";
+import {sleep} from "../../util/common";
 import {Address} from "@ton/core";
 import {GetResult, UserPrincipals} from "./types";
 import {Cell, Dictionary, TonClient} from "@ton/ton";
 import {Bot} from "grammy";
 import {getMyBalance} from "../liquidator";
-import * as fs from "fs";
 
 let lastRpcCall = 0;
 
@@ -41,8 +40,8 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
             await sleep(1000);
             continue;
         }
-        const transactions = result.data.transactions;
-        if (transactions.length === 0) break;
+        const transactions = result?.data?.transactions;
+        if (!Array.isArray(transactions) || (transactions.length === 0)) break;
         const first = await db.isTxExists(transactions[0].hash);
         if (first) {
             if (sync) break;
@@ -55,6 +54,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
         }
 
         for (const transaction of transactions) {
+            await sleep(200);
             const hash = transaction.hash;
             const utime = transaction.utime * 1000;
             const result = await db.isTxExists(hash);
@@ -67,11 +67,13 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
             if (op === undefined) continue;
             op = parseInt(op);
             let userContractAddress: Address;
+            // master supply | withdraw | liquidate | jetton transfer (eq liquidate) | debug_principal
             if (op === 0x1 || op === 0x2 || op === 0x3 || op === 0x7362d09c || op === 0xd2) {
                 if (!(transaction.compute_phase.success === true)) continue;
                 const outMsgs = transaction.out_msgs;
                 if (outMsgs.length !== 1) continue;
                 userContractAddress = Address.parseRaw(outMsgs[0].destination.address);
+                // jetton internal transfer
                 if (op === 0x7362d09c) {
                     const inAddress = Address.parseRaw(transaction.in_msg.source.address);
                     if (inAddress.equals(userContractAddress)) {
@@ -80,10 +82,12 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                     }
                 }
             }
+            // master supply success | withdraw collateralized | liquidate satisfied | liquidate unsatisfied
             else if (op === 0x11a || op === 0x211 || op === 0x311 || op == 0x31f) {
                 if (!(transaction.compute_phase.success === true)) continue;
                 userContractAddress = Address.parseRaw(transaction.in_msg.source.address);
                 if(op === 0x311) {
+                    // master liquidate satisfied
                     transaction.out_msgs.sort((a, b) => a.created_lt - b.created_lt);
                     const report = transaction.out_msgs[0];
                     if(report === undefined) {
@@ -94,6 +98,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                     bodySlice.loadMaybeRef() // upgrade info
                     bodySlice.loadInt(2) // upgrade exec
                     const reportOp = bodySlice.loadUint(32);
+                    // user liquidate success
                     if(reportOp != 0x311a) {
                         console.log(reportOp.toString(16));
                         console.log(`Report op is not 0x331a for transaction ${hash}`);
@@ -108,8 +113,8 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                         extra.loadUint(64); // protocol gift
                         extra.loadUintBig(64); // user new loan principal
                         extra.loadUintBig(256); // collateral asset id
-                        extra.loadUintBig(64); // delta collateral principal
-                        const collateralAmount = extra.loadUintBig(64);
+                        extra.loadUintBig(64); // delta collateral principal amount
+                        const collateralRewardAmount = extra.loadUintBig(64); // collateral reward for liquidation
                         await db.liquidateSuccess(queryID);
                         console.log(`Liquidation task (Query ID: ${queryID}) successfully completed`);
                         const myBalance = await getMyBalance(tonClient, walletAddress);
@@ -120,7 +125,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
 <b>Loan asset:</b> ${getAssetName(task.loanAsset)}
 <b>Loan amount:</b> ${getFriendlyAmount(loanAmount, getAssetName(task.loanAsset))}
 <b>Collateral asset:</b> ${getAssetName(task.collateralAsset)}
-<b>Collateral amount:</b> ${getFriendlyAmount(collateralAmount, getAssetName(task.collateralAsset))}
+<b>Collateral amount:</b> ${getFriendlyAmount(collateralRewardAmount, getAssetName(task.collateralAsset))}
 
 <b>User address:</b> <code>${getAddressFriendly(task.walletAddress)}</code>
 <b>Contract address:</b> <code>${getAddressFriendly(task.contractAddress)}</code>
@@ -134,9 +139,25 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
 <b>- stTON:</b> ${getFriendlyAmount(myBalance.stton, "stTON")}
 <b>- TSTON:</b> ${getFriendlyAmount(myBalance.tston, "tsTON")}
 <b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}`, { parse_mode: 'HTML' });
+
+                        const isEligibleTask = await checkEligibleSwapTask(
+                            task.collateralAsset, collateralRewardAmount,
+                            task.loanAsset
+                        );
+                        if (isEligibleTask) {
+                            await db.addSwapTask(Date.now(), task.collateralAsset, task.loanAsset, collateralRewardAmount);
+                            await bot.api.sendMessage(serviceChatID, `
+Assigned swap task for exchanging of ${getFriendlyAmount(collateralRewardAmount, getAssetName(task.collateralAsset))} for ${getAssetName(task.loanAsset)}`
+                            );
+                        } else {
+                            await bot.api.sendMessage(serviceChatID, `
+Swap cancelled (${getFriendlyAmount(collateralRewardAmount, getAssetName(task.collateralAsset))} -> ${getAssetName(task.loanAsset)})`
+                            );
+                        }
                     }
                 }
                 else if (op === 0x31f) {
+                    // master liquidation unsatisfied
                     const unsatisfiedTx = Cell.fromBoc(Buffer.from(transaction['in_msg']['raw_body'], 'hex'))[0].beginParse();
                     const op = unsatisfiedTx.loadUint(32);
                     const queryID = unsatisfiedTx.loadUintBig(64);
@@ -159,39 +180,51 @@ collateralAssetID: ${getAssetName(collateralAssetID)}
 minCollateralAmount: ${getFriendlyAmount(minCollateralAmount, getAssetName(collateralAssetID))}\n`);
 
                         const errorCode = nextBody.loadUint(32);
+                        // master_liquidating_too_much
                         if (errorCode === 0x30F1) {
                             const maxAllowedLiquidation = nextBody.loadUintBig(64);
                             console.log(`Error: ${errorCodes[errorCode]}
 Query ID: ${queryID}
 Max allowed liquidation: ${maxAllowedLiquidation}`)
                         }
+                        // user_withdraw_in_progress
                         else if (errorCode === 0x31F0) {
                             console.log(`Error: ${errorCodes[errorCode]}`);
                             await bot.api.sendMessage(serviceChatID, `🚨🚨🚨 Liquidation failed. User <code>${getAddressFriendly(userAddress)}<code/> withdraw in process 🚨🚨🚨`,
                                 { parse_mode: 'HTML' });
                         }
+                        // not_liquidatable
                         else if (errorCode === 0x31F2) {
                             console.log(`Error: ${errorCodes[errorCode]}`);
                         }
+                        // min_collateral_not_satisfied
                         else if (errorCode === 0x31F3) {
                             const collateralAmount = nextBody.loadUintBig(64);
                             console.log(`Error: ${errorCodes[errorCode]}
 Collateral amount: ${getFriendlyAmount(collateralAmount, getAssetName(collateralAssetID))}`);
                         }
+                        // user_not_enough_collateral
                         else if (errorCode === 0x31F4) {
                             const collateralPresent = nextBody.loadUintBig(64);
                             console.log(`Error: ${errorCodes[errorCode]}
 Collateral present: ${getFriendlyAmount(collateralPresent, getAssetName(collateralAssetID))}`);
                         }
+                        // user_liquidating_too_much
                         else if (errorCode === 0x31F5) {
                             const maxNotTooMuch = nextBody.loadUintBig(64);
                             console.log(`Error: ${errorCodes[errorCode]}
 Max not too much: ${maxNotTooMuch}`);
                         }
+                        // master_not_enough_liquidity
                         else if (errorCode === 0x31F6) {
                             const availableLiquidity = nextBody.loadUintBig(64);
                             console.log(`Error: ${errorCodes[errorCode]}
 Available liquidity: ${availableLiquidity}`);
+                        }
+                        // liquidation_prices_missing
+                        else if (errorCode === 0x31F7) {
+                            console.log(`Error: ${errorCodes[errorCode]}
+Liquidation prices missing`);
                         }
                         await db.unsatisfyTask(queryID);
                         console.log('\n----- Unsatisfied liquidation task -----\n')
@@ -203,6 +236,7 @@ Available liquidity: ${availableLiquidity}`);
             }
             let userDataResult: GetResult;
             setTimeout(async () => {
+                if (!userContractAddress) return;
                 const user = await db.getUser(getAddressFriendly(userContractAddress));
 
                 if(user && user.updatedAt > utime) {
@@ -274,18 +308,18 @@ Available liquidity: ${availableLiquidity}`);
                     usdt: 0n,
                 };
                 if (principalsDict !== undefined) {
-                    if (principalsDict.has(AssetID.ton))
-                        userPrincipals.ton = principalsDict.get(AssetID.ton);
-                    if (principalsDict.has(AssetID.jusdt))
-                        userPrincipals.jusdt = principalsDict.get(AssetID.jusdt);
-                    if (principalsDict.has(AssetID.jusdc))
-                        userPrincipals.jusdc = principalsDict.get(AssetID.jusdc);
-                    if (principalsDict.has(AssetID.stton))
-                        userPrincipals.stton = principalsDict.get(AssetID.stton);
-                    if (principalsDict.has(AssetID.tston))
-                        userPrincipals.tston = principalsDict.get(AssetID.tston);
-                    if (principalsDict.has(AssetID.usdt))
-                        userPrincipals.usdt = principalsDict.get(AssetID.usdt);
+                    if (principalsDict.has(AssetID.TON))
+                        userPrincipals.ton = principalsDict.get(AssetID.TON);
+                    if (principalsDict.has(AssetID.jUSDT))
+                        userPrincipals.jusdt = principalsDict.get(AssetID.jUSDT);
+                    if (principalsDict.has(AssetID.jUSDC))
+                        userPrincipals.jusdc = principalsDict.get(AssetID.jUSDC);
+                    if (principalsDict.has(AssetID.stTON))
+                        userPrincipals.stton = principalsDict.get(AssetID.stTON);
+                    if (principalsDict.has(AssetID.tsTON))
+                        userPrincipals.tston = principalsDict.get(AssetID.tsTON);
+                    if (principalsDict.has(AssetID.USDT))
+                        userPrincipals.usdt = principalsDict.get(AssetID.USDT);
                 }
 
                 if (user) {

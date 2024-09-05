@@ -1,11 +1,11 @@
-import {Address, Cell, Dictionary} from "@ton/ton";
+import {Cell, Dictionary} from "@ton/ton";
 
 export type AssetData = {
     sRate: bigint;
     bRate: bigint;
     totalSupply: bigint;
     totalBorrow: bigint;
-    lastAccural: bigint;
+    lastAccrual: bigint;
     balance: bigint;
 }
 
@@ -34,8 +34,3 @@ export type PriceData = {
     dict: Dictionary<bigint, bigint>;
     dataCell: Cell;
 };
-
-export type MiddlewareData = {
-    pricesCell: Cell,
-    signature: Buffer
-}

@@ -1,13 +1,13 @@
 import {KeyPair, sign} from "@ton/crypto";
-import {Address, ContractProvider, external, internal, storeMessage, storeMessageRelaxed} from "@ton/core";
-import {beginCell, Cell, Dictionary, toNano, TonClient, WalletContractV4} from "@ton/ton";
-import { MyDatabase } from "../db/database";
-import {AssetID, evaaMaster, highloadAddress, jettonWallets, serviceChatID} from "../config";
+import {Address, ContractProvider, internal, storeMessageRelaxed} from "@ton/core";
+import {beginCell, Cell, Dictionary, toNano, TonClient} from "@ton/ton";
+import {MyDatabase} from "../db/database";
+import {AssetID, evaaMaster, jettonWallets, serviceChatID} from "../config";
 import {getAddressFriendly, getAssetName, getFriendlyAmount} from "./indexer/helpers";
-import {getJettonWallet, sleep} from "../helpers";
-import { Bot } from "grammy";
+import {getJettonWallet} from "../helpers";
+import {sleep} from "../util/common";
+import {Bot} from "grammy";
 import crypto from "crypto";
-import * as fs from "fs";
 
 type MyBalance = {
     ton: bigint,
@@ -32,11 +32,11 @@ export async function getMyBalance(tonClient: TonClient, walletAddress: Address)
     while (true) {
         try {
             myBalance.ton = await tonClient.getBalance(walletAddress);
-            myBalance.jusdt = (await tonClient.runMethod(Address.parse(jettonWallets.jusdt), 'get_wallet_data')).stack.readBigNumber();
-            myBalance.jusdc = (await tonClient.runMethod(Address.parse(jettonWallets.jusdc), 'get_wallet_data')).stack.readBigNumber();
-            myBalance.stton = (await tonClient.runMethod(Address.parse(jettonWallets.stton), 'get_wallet_data')).stack.readBigNumber();
-            myBalance.tston = (await tonClient.runMethod(Address.parse(jettonWallets.tston), 'get_wallet_data')).stack.readBigNumber();
-            myBalance.usdt = (await tonClient.runMethod(Address.parse(jettonWallets.usdt), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.jusdt = (await tonClient.runMethod(Address.parse(jettonWallets.jUSDT), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.jusdc = (await tonClient.runMethod(Address.parse(jettonWallets.jUSDC), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.stton = (await tonClient.runMethod(Address.parse(jettonWallets.stTON), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.tston = (await tonClient.runMethod(Address.parse(jettonWallets.tsTON), 'get_wallet_data')).stack.readBigNumber();
+            myBalance.usdt = (await tonClient.runMethod(Address.parse(jettonWallets.USDT), 'get_wallet_data')).stack.readBigNumber();
             break;
         } catch (e) {
             attempts++;
@@ -44,7 +44,6 @@ export async function getMyBalance(tonClient: TonClient, walletAddress: Address)
                 throw e;
             }
             await sleep(500);
-            continue
         }
     }
 
@@ -52,8 +51,8 @@ export async function getMyBalance(tonClient: TonClient, walletAddress: Address)
 }
 
 export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
-    contract: ContractProvider, highloadAddress: Address,
-    keys: KeyPair, bot: Bot) {
+                                       contract: ContractProvider, highloadAddress: Address,
+                                       keys: KeyPair, bot: Bot) {
     await db.cancelOldTasks();
     const tasks = await db.getTasks();
     const myBalance = await getMyBalance(tonClient, highloadAddress);
@@ -65,19 +64,21 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
     let i = 0;
     for (const task of tasks) {
         console.log(myBalance)
-        if ((task.loanAsset === AssetID.ton && myBalance.ton < task.liquidationAmount) ||
-            (task.loanAsset === AssetID.jusdt && myBalance.jusdt < task.liquidationAmount) ||
-            (task.loanAsset === AssetID.jusdc && myBalance.jusdc < task.liquidationAmount) ||
-            (task.loanAsset === AssetID.stton && myBalance.stton < task.liquidationAmount) ||
-            (task.loanAsset === AssetID.tston && myBalance.tston < task.liquidationAmount) ||
-            (task.loanAsset === AssetID.usdt && myBalance.usdt < task.liquidationAmount)) {
+        if ((task.loanAsset === AssetID.TON && myBalance.ton < task.liquidationAmount)
+            || (task.loanAsset === AssetID.jUSDT && myBalance.jusdt < task.liquidationAmount)
+            || (task.loanAsset === AssetID.jUSDC && myBalance.jusdc < task.liquidationAmount)
+            || (task.loanAsset === AssetID.stTON && myBalance.stton < task.liquidationAmount)
+            || (task.loanAsset === AssetID.tsTON && myBalance.tston < task.liquidationAmount)
+            || (task.loanAsset === AssetID.USDT && myBalance.usdt < task.liquidationAmount)
+        ) {
 
-            if ((task.loanAsset === AssetID.ton && myBalance.ton < 5_000_000_000n) ||
-                (task.loanAsset === AssetID.jusdt && myBalance.jusdt < 1_000_000n) ||
-                (task.loanAsset === AssetID.jusdc && myBalance.jusdc < 1_000_000n) ||
-                (task.loanAsset === AssetID.stton && myBalance.stton < 1_000_000_000n) ||
-                (task.loanAsset === AssetID.tston && myBalance.tston < 1_000_000_000n) ||
-                (task.loanAsset === AssetID.usdt && myBalance.usdt < 1_000_000n)) {
+            if ((task.loanAsset === AssetID.TON && myBalance.ton < 5_000_000_000n)
+                || (task.loanAsset === AssetID.jUSDT && myBalance.jusdt < 1_000_000n)
+                || (task.loanAsset === AssetID.jUSDC && myBalance.jusdc < 1_000_000n)
+                || (task.loanAsset === AssetID.stTON && myBalance.stton < 1_000_000_000n)
+                || (task.loanAsset === AssetID.tsTON && myBalance.tston < 1_000_000_000n)
+                || (task.loanAsset === AssetID.USDT && myBalance.usdt < 1_000_000n)
+            ) {
                 console.log(`Not enough balance for liquidation task ${task.id}`);
                 await bot.api.sendMessage(serviceChatID, `❌ Not enough balance for liquidation task ${task.id}
 
@@ -88,23 +89,23 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
 <b>- jUSDT:</b> ${getFriendlyAmount(myBalance.jusdt, "jUSDT")}
 <b>- jUSDC:</b> ${getFriendlyAmount(myBalance.jusdc, "jUSDC")}
 <b>- stTON:</b> ${getFriendlyAmount(myBalance.stton, "stTON")}
-<b>- tsTON:</b> ${getFriendlyAmount(myBalance.tston, "tsTON")}
-<b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}`, { parse_mode: 'HTML' });
+<b>- tSTON:</b> ${getFriendlyAmount(myBalance.tston, "tsTON")}
+<b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}`, {parse_mode: 'HTML'});
                 await db.cancelTaskNoBalance(task.id);
                 continue;
             }
 
-            if(task.loanAsset === AssetID.ton) {
+            if (task.loanAsset === AssetID.TON) {
                 task.liquidationAmount = myBalance.ton - toNano(1);
-            } else if (task.loanAsset === AssetID.jusdt) {
+            } else if (task.loanAsset === AssetID.jUSDT) {
                 task.liquidationAmount = myBalance.jusdt
-            } else if (task.loanAsset === AssetID.jusdc) {
+            } else if (task.loanAsset === AssetID.jUSDC) {
                 task.liquidationAmount = myBalance.jusdc
-            } else if (task.loanAsset === AssetID.stton) {
+            } else if (task.loanAsset === AssetID.stTON) {
                 task.liquidationAmount = myBalance.stton;
-            } else if (task.loanAsset === AssetID.tston) {
+            } else if (task.loanAsset === AssetID.tsTON) {
                 task.liquidationAmount = myBalance.tston;
-            } else if (task.loanAsset === AssetID.usdt) {
+            } else if (task.loanAsset === AssetID.USDT) {
                 task.liquidationAmount = myBalance.usdt;
             }
             task.minCollateralAmount = 0n;
@@ -160,14 +161,14 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
         // Destination address: The Jetton wallet associated with the loan asset.
         // This code provides a clear explanation of the liquidation process, with detailed comments to understand each step.
 
-        if (task.loanAsset === AssetID.ton) {
+        if (task.loanAsset === AssetID.TON) {
             liquidationBody = beginCell()
                 .storeUint(0x3, 32) //liquidation opcode
                 .storeUint(task.queryID, 64) // queryID / can be 0
-                .storeAddress(Address.parse(task.walletAddress)) // address of user that you want to liquidate (not user sc address !!! it is just user wallet address based on wich user sc address will be calculated)
+                .storeAddress(Address.parse(task.walletAddress)) // address of user that you want to liquidate (not user sc address !!! it is just user wallet address based on which user sc address will be calculated)
                 .storeAddress(highloadAddress)
-                .storeUint(task.collateralAsset, 256) // id of token that you want to recive / id of token it is sha256 HASH from jetton wallet address of evaa master sc
-                .storeUint(task.minCollateralAmount, 64) // minimal amount of tokens that will suttisfy you to recive back 
+                .storeUint(task.collateralAsset, 256) // id of token that you want to receive / id of token it is sha256 HASH from jetton wallet address of evaa master sc
+                .storeUint(task.minCollateralAmount, 64) // minimal amount of tokens that will satisfy you to receive back
                 .storeInt(-1, 2) // can be always -1
                 .storeUint(task.liquidationAmount, 64)
                 .storeRef(packedPrices) // cell with prices you can get it from our IOTA nft
@@ -181,33 +182,33 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
                 .storeUint(0xf8a7ea5, 32) // jetton transfer opcode
                 .storeUint(task.queryID, 64) // just query id can be 0
                 .storeCoins(task.liquidationAmount) // amount of jettons to send same as with ton amount but without minus 0.33 
-                .storeAddress(evaaMaster) // address of jetton reciever sc, so its evaa master
-                .storeAddress(highloadAddress) // response destination to get lefted tons back
+                .storeAddress(evaaMaster) // address of jetton receiver sc, so its evaa master
+                .storeAddress(highloadAddress) // response destination to get remaining tons back
                 .storeBit(0)
-                .storeCoins(toNano('0.7')) //ton amount to forward in tokennotification / can be 0.33 ?
+                .storeCoins(toNano(0.42)) //ton amount to forward in token notification / can be 0.33 ?
                 .storeBit(1)
                 .storeRef(beginCell()
                     .storeUint(0x3, 32) // our opcode
-                    .storeAddress(Address.parse(task.walletAddress)) // address of user that you want to liquidate (not user sc address !!! it is just user wallet address based on wich user sc address will be calculated) 
+                    .storeAddress(Address.parse(task.walletAddress)) // address of user that you want to liquidate (not user sc address !!! it is just user wallet address based on which user sc address will be calculated)
                     .storeAddress(highloadAddress)
                     .storeUint(task.collateralAsset, 256) // asset id
-                    .storeUint(task.minCollateralAmount, 64) // minimal amount of tokens that will suttisfy you to recive back  
+                    .storeUint(task.minCollateralAmount, 64) // minimal amount of tokens that will satisfy you to receive back
                     .storeInt(-1, 2) // just -1
                     .storeUint(0, 64)
                     .storeRef(packedPrices) // cell with prices you can get it from our IOTA nft
                     .endCell())
                 .endCell()
-            amount = toNano('1'); // tons for tx chain fees  / can be 0.34 ?
+            amount = toNano(0.5); // tons for tx chain fees  / can be 0.34 ?
             destAddr = getJettonWallet(task.loanAsset);
-            if (task.loanAsset === AssetID.jusdt) {
+            if (task.loanAsset === AssetID.jUSDT) {
                 myBalance.jusdt -= task.liquidationAmount;
-            } else if (task.loanAsset === AssetID.jusdc) {
+            } else if (task.loanAsset === AssetID.jUSDC) {
                 myBalance.jusdc -= task.liquidationAmount;
-            } else if (task.loanAsset === AssetID.stton) {
+            } else if (task.loanAsset === AssetID.stTON) {
                 myBalance.stton -= task.liquidationAmount;
-            } else if (task.loanAsset === AssetID.tston) {
+            } else if (task.loanAsset === AssetID.tsTON) {
                 myBalance.tston -= task.liquidationAmount;
-            } else if (task.loanAsset === AssetID.usdt) {
+            } else if (task.loanAsset === AssetID.USDT) {
                 myBalance.usdt -= task.liquidationAmount
             } else {
                 throw new Error("Unknown asset");
@@ -223,12 +224,15 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
             .endCell()
         );
 
+        await db.takeTask(task.id);
+
         log.push({
             id: task.id,
             walletAddress: task.walletAddress
         });
+
         i++;
-        if (i == 100) {
+        if (i >= 100) {
             break;
         }
     }
@@ -272,12 +276,12 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
     //     .endCell();
     // fs.writeFileSync('externalMessage.txt', externalMessage.toBoc().toString('base64'));
 
-    while(true) {
+    while (true) {
         try {
             await contract.external(highloadMessageBody);
-        } catch(e) {
+        } catch (e) {
             console.log(e)
-            await sleep(1000);
+            await sleep(200);
             continue;
         }
         break;

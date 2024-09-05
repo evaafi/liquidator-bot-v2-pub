@@ -11,6 +11,11 @@ export type User = {
     sttonPrincipal: bigint,
     tstonPrincipal: bigint,
     usdtPrincipal: bigint,
+    // following columns are for the lp version
+    // dedustTonUsdtPrincipal: bigint,
+    // stonfiTonUsdtPrincipal: bigint,
+    // stormTonPrincipal: bigint,
+    // stormUsdtPrincipal: bigint,
     state: string
 }
 
