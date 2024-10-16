@@ -1,49 +1,61 @@
 import {MyDatabase} from "./db/database";
-import {Address, beginCell, TonClient} from "@ton/ton";
-import {HIGHLOAD_CODE, highloadAddress, rpcEndpoint, serviceChatID, tonApiEndpoint} from "./config";
-import axios from "axios";
+import {OpenedContract, TonClient} from "@ton/ton";
+import {
+    DB_PATH,
+    HIGHLOAD_ADDRESS,
+    IS_TESTNET,
+    makeTonClient,
+    POOL_CONFIG,
+    SERVICE_CHAT_ID,
+    TON_API_ENDPOINT
+} from "./config";
+import axios, {AxiosInstance} from "axios";
 import {handleTransactions} from "./services/indexer/indexer";
 import {validateBalances} from "./services/validator/validator";
 import {configDotenv} from "dotenv";
-import {handleLiquidates} from "./services/liquidator";
+import {handleLiquidates} from "./services/liquidator/liquidator";
 import {mnemonicToWalletKey} from "@ton/crypto";
-import {Bot} from "grammy";
 import * as https from "https";
-import {sleep} from "./util/common";
+import {sleep} from "./util/process";
 import {clearInterval} from "node:timers";
+import {Evaa} from "@evaafi/sdkv6";
+import {retry} from "./util/retry";
+import {Messenger} from "./lib/bot";
+import {HighloadWalletV2} from "./lib/highload_contract_v2";
 
-async function main(bot: Bot) {
-    configDotenv();
-    const db = new MyDatabase();
-    await db.init();
-
+function makeTonApi(endpoint, apiKey: string) {
     const tonApi = axios.create({
-        baseURL: tonApiEndpoint,
+        baseURL: endpoint,
         httpsAgent: new https.Agent({
             rejectUnauthorized: false,
         }),
         headers: {
-            'Authorization': process.env.TONAPI_KEY
+            'Authorization': apiKey
         }
     });
+    return tonApi;
+}
 
-    const tonClient = new TonClient({
-        endpoint: rpcEndpoint,
-        apiKey: process.env.TONCENTER_API_KEY
-    });
+async function main(bot: Messenger) {
+    configDotenv();
+    const db = new MyDatabase(POOL_CONFIG.poolAssetsConfig);
+    await db.init(DB_PATH);
+
+    const tonApi: AxiosInstance = makeTonApi(TON_API_ENDPOINT, process.env.TONAPI_KEY);
+    const tonClient: TonClient = await makeTonClient();
+    const evaa: OpenedContract<Evaa> = tonClient.open(new Evaa({debug: IS_TESTNET, poolConfig: POOL_CONFIG}));
+    const res = await retry(
+        async () => await evaa.getSync(),
+        {attempts: 10, attemptInterval: 5000}
+    );
+    if (!res.ok) throw (`Failed to sync evaa master`);
+
     const keys = await mnemonicToWalletKey(process.env.WALLET_PRIVATE_KEY.split(' '));
-    const contract = tonClient.provider(Address.parse(highloadAddress), {
-        code: HIGHLOAD_CODE,
-        data: beginCell()
-            .storeUint(698983191, 32)
-            .storeUint(0, 64)
-            .storeBuffer(keys.publicKey)
-            .storeBit(0)
-            .endCell()
-    });
+    // const highloadContract = openHighloadContract(tonClient, keys.publicKey);
+    const highloadContract = new HighloadWalletV2(tonClient, HIGHLOAD_ADDRESS, keys.publicKey);
 
     console.log(`Indexer is syncing...`);
-    await handleTransactions(db, tonApi, tonClient, bot, Address.parse(highloadAddress), true);
+    await handleTransactions(db, tonApi, tonClient, bot, evaa, HIGHLOAD_ADDRESS, true);
     console.log(`Indexer is synced. Waiting 1 sec before starting`);
 
     await sleep(1000);
@@ -56,22 +68,18 @@ async function main(bot: Bot) {
         }
         console.log('Starting handleTransactions...')
         handlingTransactions = true;
-        handleTransactions(db, tonApi, tonClient, bot, Address.parse(highloadAddress))
+        handleTransactions(db, tonApi, tonClient, bot, evaa, HIGHLOAD_ADDRESS)
             .catch(e => {
                 console.log(e);
                 if (JSON.stringify(e).length == 2) {
-                    bot.api.sendMessage(serviceChatID, `[Indexer]: ${e}`);
+                    bot.sendMessage(`[Indexer]: ${e}`);
                     return;
                 }
-                bot.api.sendMessage(serviceChatID, `[Indexer]: ${JSON.stringify(e).slice(0, 300)}`);
+                bot.sendMessage(`[Indexer]: ${JSON.stringify(e).slice(0, 300)}`);
             })
             .finally(() => {
                 handlingTransactions = false;
                 console.log("Exiting from handleTransactions...");
-                bot.api.sendMessage(serviceChatID, `Exiting from handleTransactions`).catch((e) => {
-                    console.log('bot error in handle finally: ');
-                    console.log(e);
-                });
             });
     }, 5000);
 
@@ -83,14 +91,14 @@ async function main(bot: Bot) {
         }
         validating = true;
 
-        validateBalances(db, tonClient, bot)
+        validateBalances(db, evaa, bot)
             .catch(e => {
                 console.log(e);
                 if (JSON.stringify(e).length == 2) {
-                    bot.api.sendMessage(serviceChatID, `[Validator]: ${e}`);
+                    bot.sendMessage(`[Validator]: ${e}`);
                     return;
                 }
-                bot.api.sendMessage(serviceChatID, `[Validator]: ${JSON.stringify(e).slice(0, 300)}`);
+                bot.sendMessage(`[Validator]: ${JSON.stringify(e).slice(0, 300)}`);
             })
             .finally(() => {
                 validating = false;
@@ -104,17 +112,18 @@ async function main(bot: Bot) {
             return;
         }
         liquidating = true;
-        handleLiquidates(db, tonClient, contract, Address.parse(highloadAddress), keys, bot)
+        handleLiquidates(db, tonClient, highloadContract, HIGHLOAD_ADDRESS, evaa, keys, bot)
             .catch(async (e) => {
                 console.log(e);
                 if (JSON.stringify(e).length == 2) {
-                    await bot.api.sendMessage(serviceChatID, `[Liquidator]: ${e}`);
+                    await bot.sendMessage(`[Liquidator]: ${e}`);
                     return;
                 }
-                await bot.api.sendMessage(serviceChatID, `[Liquidator]: ${JSON.stringify(e, null, 2).slice(0, 300)}`);
+                await bot.sendMessage(`[Liquidator]: ${JSON.stringify(e, null, 2).slice(0, 300)}`);
             })
             .finally(async () => {
                 liquidating = false;
+
                 console.log("Exiting from handleLiquidates...");
             });
     }, 5000);
@@ -129,7 +138,7 @@ async function main(bot: Bot) {
         try {
             const blacklistedUsers = await db.handleFailedTasks();
             for (const user of blacklistedUsers) {
-                await bot.api.sendMessage(serviceChatID, `❌ User ${user} blacklisted`);
+                await bot.sendMessage(`❌ User ${user} blacklisted`);
                 await sleep(100);
             }
             await db.deleteOldTasks();
@@ -142,33 +151,43 @@ async function main(bot: Bot) {
     }, 5000);
 
     // handle interruption Ctrl+C === SIGINT
+    let first_sigint_request = true;
     process.on('SIGINT', async () => {
-        clearInterval(transactionID);
-        clearInterval(validatorID);
-        clearInterval(liquidatorID);
-        clearInterval(blacklisterID);
+        if (first_sigint_request) {
+            first_sigint_request = false;
+            clearInterval(transactionID);
+            clearInterval(validatorID);
+            clearInterval(liquidatorID);
+            clearInterval(blacklisterID);
 
-        const message = `Received SIGINT, stopping services...`;
-        console.log(message);
-        await bot.api.sendMessage(serviceChatID, message);
+            const message = `Received SIGINT, stopping services...`;
+            console.log(message);
+            await bot.sendMessage(message);
 
-        setTimeout(()=> {
+            setTimeout(() => {
+                throw ('Forced exit...');
+            }, 10_000);
+        } else {
             throw ('Forced exit...');
-        }, 10_000);
+        }
     });
 }
 
 (() => {
     configDotenv();
-    const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
+    const bot = new Messenger(
+        process.env.TELEGRAM_BOT_TOKEN,
+        process.env.SERVICE_CHAT_ID,
+        {throwOnFailure: false}
+    );
     main(bot)
         .catch(e => {
             console.log(e);
             if (JSON.stringify(e).length == 2) {
-                bot.api.sendMessage(serviceChatID, `Fatal error: ${e}`);
+                bot.sendMessage(`Fatal error: ${e}`).then();
                 return;
             }
-            bot.api.sendMessage(serviceChatID, `Fatal error: ${JSON.stringify(e).slice(0, 300)} `);
+            bot.sendMessage(`Fatal error: ${JSON.stringify(e).slice(0, 300)} `).then();
         })
         .finally(() => console.log("Exiting..."));
 })()

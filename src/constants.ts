@@ -1,0 +1,3 @@
+import {Address} from "@ton/core";
+
+export const NULL_ADDRESS = Address.parse('0:0000000000000000000000000000000000000000000000000000000000000000');

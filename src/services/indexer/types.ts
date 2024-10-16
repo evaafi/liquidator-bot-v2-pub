@@ -6,11 +6,9 @@ export type GetResult = {
     exit_code: number;
 };
 
-export type UserPrincipals = {
-    ton: bigint,
-    jusdt: bigint,
-    jusdc: bigint,
-    stton: bigint,
-    tston: bigint,
-    usdt: bigint
+export type LiquidationAssetsInfo = {
+    loanAssetName: string,
+    loanAssetDecimals: bigint,
+    collateralAssetName: string,
+    collateralAssetDecimals: bigint
 }

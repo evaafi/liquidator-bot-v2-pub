@@ -1,29 +1,83 @@
 import {Database, open} from "sqlite";
 import sqlite3 from 'sqlite3';
-import {Task, User} from "./types";
-import {isTestnet} from "../config";
+import {emptyPrincipals, PrincipalsDict, Task, User} from "./types";
+import {retry} from "../util/retry";
+import {PoolAssetConfig} from "@evaafi/sdkv6";
+import {makeCreateUsersScript, makeProcessUserScript} from "./helpers";
+
+const seconds = (s: number) => s * 1000;
 
 // tasks time-to-live
 export const TTL = {
-    pending: 60_000,
-    processing: 60_000,
-    sent: 300_000,
-    success: 10_000,
-    unsatisfied: 10_000,
-    insufficient_balance: 300_000,
+    pending: seconds(60),
+    processing: seconds(60),
+    sent: seconds(300),
+    success: seconds(10),
+    unsatisfied: seconds(10),
+    insufficient_balance: seconds(300),
 }
 
-export class MyDatabase {
-    private db: Database;
+const DATABASE_RETRY_TIMEOUT = seconds(1);
+const DATABASE_RETRY_ATTEMPTS = 3;
+export const DATABASE_DEFAULT_RETRY_OPTIONS = {
+    attempts: DATABASE_RETRY_ATTEMPTS,
+    attemptInterval: DATABASE_RETRY_TIMEOUT
+};
 
-    constructor() {
+export class MyDatabase {
+    protected db: Database;
+    public readonly COLUMNS: string[];
+    public readonly ASSET_IDS: bigint[];
+    public readonly CREATE_USERS: string;
+    public readonly INSERT_OR_UPDATE_USER: string;
+
+    private fetchDbPrincipals(row: any) {
+        const principals = emptyPrincipals();
+        this.COLUMNS.forEach((col, index) => {
+            const id = this.ASSET_IDS[index];
+            const amount = row[col];
+            principals.set(id, amount);
+        });
+        return principals;
     }
 
-    async init() {
-        this.db = await open({
-            filename: isTestnet ? './database-testnet.db' : './database-mainnet.db',
-            driver: sqlite3.Database
-        });
+    constructor(poolAssetsConfig: PoolAssetConfig[]) {
+        const columns = poolAssetsConfig.map(x => (x.name + '_principal').toLowerCase());
+        const assetNames = poolAssetsConfig.map(x => x.name);
+        const assetIds = poolAssetsConfig.map(x => x.assetId);
+
+        this.COLUMNS = columns;
+        this.ASSET_IDS = assetIds;
+
+        console.log('ASSETS LIST: ', columns);
+        console.log('ASSET NAMES: ', assetNames);
+        console.log('ASSET IDS: ', assetIds);
+
+        this.CREATE_USERS = makeCreateUsersScript(columns);
+        console.log('CREATE USERS SCRIPT: ', this.CREATE_USERS);
+
+        this.INSERT_OR_UPDATE_USER = makeProcessUserScript(columns);
+        console.log('PROCESS USER SCRIPT: ', this.INSERT_OR_UPDATE_USER);
+    }
+
+    async close() {
+        try {
+            await this.db.close();
+        } catch (e) {
+            console.warn('Failed to close db.', e);
+        }
+    }
+
+    async init(arg: string | Database) {
+        if (typeof arg === 'string') {
+            this.db = await open({
+                filename: arg,
+                driver: sqlite3.Database
+            });
+        } else {
+            this.db = arg;
+        }
+
         await this.db.run(`
               CREATE TABLE IF NOT EXISTS transactions(
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,23 +86,7 @@ export class MyDatabase {
               )
           `);
 
-        await this.db.run(`
-            CREATE TABLE IF NOT EXISTS users(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                wallet_address VARCHAR NOT NULL,
-                contract_address VARCHAR UNIQUE NOT NULL,
-                code_version INTEGER NOT NULL,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL,
-                ton_principal VARCHAR NOT NULL,
-                jusdt_principal VARCHAR NOT NULL,
-                jusdc_principal VARCHAR NOT NULL,
-                stton_principal VARCHAR NOT NULL,
-                tston_principal VARCHAR NOT NULL,
-                usdt_principal VARCHAR NOT NULL,
-                state VARCHAR NOT NULL DEFAULT 'active'
-            )
-      `);
+        await this.db.run(this.CREATE_USERS);
 
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS liquidation_tasks(
@@ -62,7 +100,6 @@ export class MyDatabase {
                 liquidation_amount VARCHAR NOT NULL,
                 min_collateral_amount VARCHAR NOT NULL,
                 prices_cell TEXT NOT NULL,
-                signature TEXT NOT NULL,
                 query_id VARCHAR NOT NULL UNIQUE,
                 state VARCHAR NOT NULL DEFAULT 'pending'
             )
@@ -86,95 +123,115 @@ export class MyDatabase {
     }
 
     async addTransaction(hash: string, utime: number) {
-        await this.db.run(`
-            INSERT INTO transactions(hash, utime) VALUES(?, ?)
-        `, hash, utime)
+        await retry(async () => {
+            await this.db.run(
+                `INSERT INTO transactions(hash, utime) VALUES(?, ?)`,
+                hash, utime
+            );
+        }, DATABASE_DEFAULT_RETRY_OPTIONS);
     }
 
     async isTxExists(hash: string) {
-        const result = await this.db.get(`
-            SELECT * FROM transactions WHERE hash = ?
-        `, hash)
-        return !!result
+        const res = await retry(async (): Promise<boolean> => {
+            const result = await this.db.get(`SELECT * FROM transactions WHERE hash = ?`, hash)
+            return !!result
+        }, DATABASE_DEFAULT_RETRY_OPTIONS);
+        if (!res.ok) throw (`Failed to check tx, db error`);
+
+        return res.value;
     }
 
-    async addUser(
-        wallet_address: string, contract_address: string, code_version: number,
-        created_at: number, updated_at: number, ton_principal: bigint,
-        jusdt_principal: bigint, jusdc_principal: bigint, stton_principal: bigint, tston_principal: bigint, usdt_principal: bigint) {
-        await this.db.run(`
-            INSERT INTO users(wallet_address, contract_address, code_version, created_at, updated_at, ton_principal, jusdt_principal, jusdc_principal, stton_principal, tston_principal, usdt_principal)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, wallet_address, contract_address, code_version, created_at, updated_at, ton_principal.toString(), jusdt_principal.toString(), jusdc_principal.toString(), stton_principal.toString(), tston_principal.toString(), usdt_principal.toString())
+    mapPrincipals(principals: PrincipalsDict) {
+        return this.ASSET_IDS.map(id => (principals.get(id) ?? 0n).toString());
     }
 
     async getUser(contract_address: string): Promise<User> {
-        const result = await this.db.get(`
-            SELECT * FROM users WHERE contract_address = ?
-        `, contract_address);
+        const result = await retry(async () => {
+            return await this.db.get(
+                `SELECT * FROM users WHERE contract_address = ?`,
+                contract_address
+            );
+        }, DATABASE_DEFAULT_RETRY_OPTIONS);
 
-        if (!result) return undefined;
+        if (!result.ok) throw (`Failed to get user, problem with db`);
+        if (!result.value) return undefined;
 
+        const row = result.value;
+        const principals = this.fetchDbPrincipals(row);
+        const {id, wallet_address, code_version, created_at, updated_at, actualized_at, state} = row;
         return {
-            id: result.id,
-            wallet_address: result.wallet_address,
-            contract_address: result.contract_address,
-            codeVersion: result.code_version,
-            createdAt: result.created_at,
-            updatedAt: result.updated_at,
-            tonPrincipal: BigInt(result.ton_principal),
-            jusdtPrincipal: BigInt(result.jusdt_principal),
-            jusdcPrincipal: BigInt(result.jusdc_principal),
-            sttonPrincipal: BigInt(result.stton_principal),
-            tstonPrincipal: BigInt(result.tston_principal),
-            usdtPrincipal: BigInt(result.usdt_principal),
-            state: result.state
+            id, wallet_address, contract_address,
+            code_version, created_at, updated_at, actualized_at,
+            principals, state,
         }
     }
 
-    async updateUser(contract_address: string, code_version: number, created_at: number, updated_at,
-                     tonPrincipal: bigint, jusdtPrincipal: bigint, jusdcPrincipal: bigint, sttonPrincipal: bigint, tstonPrincipal: bigint, usdtPrincipal: bigint) {
-        await this.db.run(`
-            UPDATE users 
-            SET code_version = ?, 
-                created_at = IIF(created_at > ?, ?, created_at), 
-                updated_at = IIF(updated_at < ?, ?, updated_at), 
-                ton_principal = ?, jusdt_principal = ?, jusdc_principal = ?, stton_principal = ?, tston_principal = ?, usdt_principal = ?
-            WHERE contract_address = ?
-        `, code_version, created_at, created_at, updated_at, updated_at, tonPrincipal.toString(), jusdtPrincipal.toString(), jusdcPrincipal.toString(), sttonPrincipal.toString(), tstonPrincipal.toString(), usdtPrincipal.toString(), contract_address)
-    }
-
     async updateUserTime(contract_address: string, created_at: number, updated_at: number) {
-        await this.db.run(`
+        console.log(`Update user time for contract ${contract_address}`);
+        await retry(async () => {
+            await this.db.run(`
             UPDATE users 
-            SET created_at = IIF(created_at > ?, ?, created_at), 
-                updated_at = IIF(updated_at < ?, ?, updated_at)
+            SET created_at = CASE WHEN created_at > ? THEN ? ELSE created_at END, 
+                updated_at = CASE WHEN updated_at < ? THEN ? ELSE updated_at END
             WHERE contract_address = ?
         `, created_at, created_at, updated_at, updated_at, contract_address)
+        }, DATABASE_DEFAULT_RETRY_OPTIONS);
+    }
+
+    async insertOrUpdateUser(user: User) {
+        const _principals = this.mapPrincipals(user.principals);
+        const insertParameters = [
+            user.wallet_address, user.contract_address,
+            user.code_version, user.created_at, user.updated_at, user.actualized_at,
+            ..._principals
+        ];
+
+        const baseUpdateParameters = [
+            user.actualized_at, user.code_version,  // code version
+            user.created_at, user.created_at,       // created time
+            user.updated_at, user.updated_at,       // updated time
+            user.actualized_at, user.actualized_at, // actualized time
+        ];
+
+        const principalUpdateParameters = this.ASSET_IDS.map(
+            asset_id => [user.actualized_at, (user.principals.get(asset_id) ?? 0n).toString()]
+        ).flat();
+
+        const parameters = [
+            insertParameters,
+            baseUpdateParameters,
+            principalUpdateParameters,
+        ].flat();
+
+        const res = await this.db.run(this.INSERT_OR_UPDATE_USER, ...parameters);
+        if (!res) throw (`Failed to add_or_insert user ${user.contract_address}`);
     }
 
     async getUsers() {
-        const result = await this.db.all(`
-            SELECT * FROM users
-            WHERE state = 'active'
-        `);
+        const result = await retry(async () =>
+                await this.db.all(`SELECT * FROM users WHERE state = 'active'`)
+            , DATABASE_DEFAULT_RETRY_OPTIONS
+        );
+
+        if (!result.ok) throw (`Failed to get users, problem with db`);
 
         const users: User[] = [];
-        for (const row of result) {
+        for (const row of result.value) {
+            const principals = this.fetchDbPrincipals(row);
+            const {
+                id,
+                wallet_address,
+                contract_address,
+                code_version,
+                created_at,
+                actualized_at,
+                updated_at,
+                state
+            } = row;
             users.push({
-                id: row.id,
-                wallet_address: row.wallet_address,
-                contract_address: row.contract_address,
-                codeVersion: row.code_version,
-                createdAt: row.created_at,
-                updatedAt: row.updated_at,
-                tonPrincipal: BigInt(row.ton_principal),
-                jusdtPrincipal: BigInt(row.jusdt_principal),
-                jusdcPrincipal: BigInt(row.jusdc_principal),
-                sttonPrincipal: BigInt(row.stton_principal),
-                tstonPrincipal: BigInt(row.tston_principal),
-                usdtPrincipal: BigInt(row.usdt_principal),
-                state: row.state
+                id, wallet_address, contract_address,
+                code_version, created_at, updated_at, actualized_at,
+                principals, state,
             });
         }
 
@@ -183,35 +240,41 @@ export class MyDatabase {
 
     async addTask(walletAddress: string, contractAddress: string, createdAt: number, loanAsset: bigint,
                   collateralAsset: bigint, liquidationAmount: bigint, minCollateralAmount: bigint,
-                  pricesCell: string, signature: string, queryID: bigint) {
+                  pricesCell: string, queryID: bigint) {
         await this.db.run(`
-            INSERT INTO liquidation_tasks(wallet_address, contract_address, created_at, updated_at, loan_asset, collateral_asset, liquidation_amount, min_collateral_amount, prices_cell, signature, query_id) 
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, walletAddress, contractAddress, createdAt, createdAt, loanAsset.toString(), collateralAsset.toString(), liquidationAmount.toString(), minCollateralAmount.toString(), pricesCell, signature, queryID.toString())
+            INSERT INTO liquidation_tasks(wallet_address, contract_address, created_at, updated_at, loan_asset, 
+                collateral_asset, liquidation_amount, min_collateral_amount, prices_cell, query_id
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            walletAddress, contractAddress, createdAt, createdAt,
+            loanAsset.toString(), collateralAsset.toString(), liquidationAmount.toString(), minCollateralAmount.toString(),
+            pricesCell, queryID.toString()
+        )
     }
 
-    async getTasks() {
-        const result = await this.db.all(`
-            SELECT * FROM liquidation_tasks
-            WHERE state = 'pending'
-        `);
-        if (!result) return undefined;
+    async getTasks(max: number): Promise<Task[]> {
+        const result = await retry(async () => {
+            return await this.db.all(
+                `SELECT * FROM liquidation_tasks WHERE state = 'pending' LIMIT ?`, max
+            );
+        }, DATABASE_DEFAULT_RETRY_OPTIONS);
+
+        if (!result.ok) throw (`Failed to get tasks from db`);
+        if (!result.value) return undefined;
 
         const tasks: Task[] = [];
-        for (const row of result) {
+        for (const row of result.value) {
             tasks.push({
                 id: row.id,
-                walletAddress: row.wallet_address,
-                contractAddress: row.contract_address,
-                createdAt: row.created_at,
-                updatedAt: row.updated_at,
-                loanAsset: BigInt(row.loan_asset),
-                collateralAsset: BigInt(row.collateral_asset),
-                liquidationAmount: BigInt(row.liquidation_amount),
-                minCollateralAmount: BigInt(row.min_collateral_amount),
-                pricesCell: row.prices_cell,
-                signature: row.signature,
-                queryID: BigInt(row.query_id),
+                wallet_address: row.wallet_address,
+                contract_address: row.contract_address,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                loan_asset: BigInt(row.loan_asset),
+                collateral_asset: BigInt(row.collateral_asset),
+                liquidation_amount: BigInt(row.liquidation_amount),
+                min_collateral_amount: BigInt(row.min_collateral_amount),
+                prices_cell: row.prices_cell,
+                query_id: BigInt(row.query_id),
                 state: row.state
             });
         }
@@ -220,50 +283,52 @@ export class MyDatabase {
     }
 
     async takeTask(id: number) {
-        await this.db.run(`
-            UPDATE liquidation_tasks 
-            SET state = 'processing', updated_at = ?
-            WHERE id = ?
-        `, Date.now(), id)
+        const res = await retry(async () => await this.db.run(`
+            UPDATE liquidation_tasks SET state = 'processing', updated_at = ? WHERE id = ?`, Date.now(), id),
+            DATABASE_DEFAULT_RETRY_OPTIONS
+        );
+        if (!res.ok) throw (`Failed to update task status to 'processing'`);
     }
 
     async liquidateSent(id: number) {
-        await this.db.run(`
-            UPDATE liquidation_tasks 
-            SET state = 'sent', updated_at = ?
-            WHERE id = ?
-        `, Date.now(), id)
+        const res = await retry(async () => await this.db.run(`
+            UPDATE liquidation_tasks SET state = 'sent', updated_at = ? WHERE id = ? `, Date.now(), id),
+            DATABASE_DEFAULT_RETRY_OPTIONS);
+        if (!res.ok) throw (`Failed to update task status to 'sent'`);
     }
 
     async liquidateSuccess(queryID: bigint) {
-        await this.db.run(`
-            UPDATE liquidation_tasks
-            SET state = 'success', updated_at = ?
-            WHERE query_id = ?
-        `, Date.now(), queryID.toString())
+        const res = await retry(async () => await this.db.run(`
+            UPDATE liquidation_tasks SET state = 'success', updated_at = ? WHERE query_id = ? `,
+            Date.now(), queryID.toString()
+        ), DATABASE_DEFAULT_RETRY_OPTIONS);
+        if (!res.ok) throw (`Failed to update task status to 'success'`);
     }
 
-    async getTask(queryID: bigint) {
-        const result = await this.db.get(`
-            SELECT * FROM liquidation_tasks
-            WHERE query_id = ?
-        `, queryID.toString());
-        if (!result) return undefined;
+    async getTask(queryID: bigint): Promise<Task> {
+        const result = await retry(
+            async () => await this.db.get(
+                `SELECT * FROM liquidation_tasks WHERE query_id = ?`, queryID.toString()
+            ), DATABASE_DEFAULT_RETRY_OPTIONS);
+
+        if (!result.ok) throw (`Failed to get task from db`);
+
+        const task = result.value;
+        if (!task) return undefined;
 
         return {
-            id: result.id,
-            walletAddress: result.wallet_address,
-            contractAddress: result.contract_address,
-            createdAt: result.created_at,
-            updatedAt: result.updated_at,
-            loanAsset: BigInt(result.loan_asset),
-            collateralAsset: BigInt(result.collateral_asset),
-            liquidationAmount: BigInt(result.liquidation_amount),
-            minCollateralAmount: BigInt(result.min_collateral_amount),
-            pricesCell: result.prices_cell,
-            signature: result.signature,
-            queryID: BigInt(result.query_id),
-            state: result.state
+            id: task.id,
+            wallet_address: task.wallet_address,
+            contract_address: task.contract_address,
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+            loan_asset: BigInt(task.loan_asset),
+            collateral_asset: BigInt(task.collateral_asset),
+            liquidation_amount: BigInt(task.liquidation_amount),
+            min_collateral_amount: BigInt(task.min_collateral_amount),
+            prices_cell: task.prices_cell,
+            query_id: BigInt(task.query_id),
+            state: task.state
         };
     }
 
@@ -281,33 +346,13 @@ export class MyDatabase {
         `, Date.now(), Date.now(), TTL.processing)
 
         return [];
-        // TODO: rethink the blacklisting logic
-
-        // const result = await this.db.all(`
-        //     UPDATE users
-        //     SET state = 'blacklist'
-        //     WHERE (
-        //         SELECT COUNT(*)
-        //         FROM liquidation_tasks
-        //         WHERE liquidation_tasks.wallet_address = users.wallet_address AND state = 'failed'
-        //     ) >= 1 AND state = 'active'
-        //     RETURNING users.wallet_address
-        // `);
-        //
-        // const wallets: string[] = [];
-        // for(const row of result) {
-        //     wallets.push(row.wallet_address);
-        // }
-        //
-        // return wallets;
     }
 
     async blacklistUser(walletAddress: string) {
-        await this.db.all(`
-            UPDATE users
-            SET state = 'blacklist'
-            WHERE users.wallet_address = ?   
-        `, walletAddress);
+        const res = await retry(async () => await this.db.all(`
+            UPDATE users SET state = 'blacklist' WHERE users.wallet_address = ?   
+        `, walletAddress), DATABASE_DEFAULT_RETRY_OPTIONS);
+        if (!res.ok) throw (`Failed to blacklist user ${walletAddress}`);
     }
 
     async isTaskExists(walletAddress: string) {

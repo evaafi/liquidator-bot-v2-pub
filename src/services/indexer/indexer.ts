@@ -1,49 +1,80 @@
-import {MyDatabase} from "../../db/database";
-import {AxiosInstance, AxiosResponse, isAxiosError} from "axios";
-import {AssetID, evaaMaster, serviceChatID} from "../../config";
-import {checkEligibleSwapTask, getAddressFriendly, getAssetName, getFriendlyAmount, getRequest} from "./helpers";
-import {sleep} from "../../util/common";
-import {Address} from "@ton/core";
-import {GetResult, UserPrincipals} from "./types";
-import {Cell, Dictionary, TonClient} from "@ton/ton";
-import {Bot} from "grammy";
-import {getMyBalance} from "../liquidator";
+import {DATABASE_DEFAULT_RETRY_OPTIONS, MyDatabase} from "../../db/database";
+import {AxiosInstance, AxiosResponse} from "axios";
+import {JETTON_WALLETS, POOL_CONFIG, RPC_CALL_DELAY, TX_PROCESS_DELAY, USER_UPDATE_DELAY} from "../../config";
+import {
+    checkEligibleSwapTask,
+    DelayedCallDispatcher,
+    ERROR_CODE,
+    formatLiquidationSuccess,
+    formatLiquidationUnsatisfied,
+    formatSwapAssignedMessage,
+    formatSwapCanceledMessage,
+    getErrorDescription,
+    makeGetAccountTransactionsRequest,
+    OP_CODE,
+} from "./helpers";
+import {sleep} from "../../util/process";
+import {Address, Dictionary} from "@ton/core";
+import {Cell, OpenedContract, TonClient} from "@ton/ton";
+import {getAddressFriendly, getFriendlyAmount} from "../../util/format";
+import {getBalances} from "../../lib/balances";
+import {Evaa, EvaaUser, TON_MAINNET} from "@evaafi/sdkv6";
+import {retry} from "../../util/retry";
+import {User} from "../../db/types";
+import {Messenger} from "../../lib/bot";
 
-let lastRpcCall = 0;
-
-const errorCodes = {
-    0x30F1: "Master liquidating too much",
-    0x31F2: "Not liquidatable",
-    0x31F3: "Min collateral not satisfied",
-    0x31F4: "User not enough collateral",
-    0x31F5: "User liquidating too much",
-    0x31F6: "Master not enough liquidity",
-    0x31F0: "User withdraw in process"
-}
-
-export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, tonClient: TonClient, bot: Bot, walletAddress: Address, sync = false) {
-    let before_lt = 0;
+export async function getTransactionsBatch(tonApi: AxiosInstance, bot: Messenger, evaaMaster: Address, before_lt: number): Promise<AxiosResponse<any, any>> {
     let attempts = 0;
     while (true) {
-        let result: AxiosResponse<any, any>;
         try {
-            result = await tonApi.get(getRequest(evaaMaster, before_lt));
+            const request = makeGetAccountTransactionsRequest(evaaMaster, before_lt);
+            const res = await tonApi.get(request);
             attempts = 0;
+            return res;
         } catch (e) {
             attempts++;
             if (attempts > 3) {
-                await bot.api.sendMessage(serviceChatID, `🚨🚨🚨 Unknown problem with TonAPI 🚨🚨🚨`);
+                await bot.sendMessage(`🚨🚨🚨 Unknown problem with TonAPI 🚨🚨🚨`);
                 console.log(e);
                 await sleep(10000);
                 attempts = 0;
+            } else {
+                await sleep(1000);
             }
-            await sleep(1000);
-            continue;
         }
-        const transactions = result?.data?.transactions;
+    }
+}
+
+export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, tonClient: TonClient, bot: Messenger, evaa: OpenedContract<Evaa>, walletAddress: Address, sync = false) {
+    const getAssetsInfo = (loanAsset: bigint, collateralAsset: bigint) => {
+        const loanAssetPoolConfig = POOL_CONFIG.poolAssetsConfig.find(it => it.assetId === loanAsset);
+        const collateralAssetPoolConfig = POOL_CONFIG.poolAssetsConfig.find(it => it.assetId === collateralAsset);
+        if (!loanAssetPoolConfig) throw (`Asset ${loanAsset} is not supported`);
+        if (!collateralAssetPoolConfig) throw (`Asset ${collateralAsset} is not supported`);
+
+        const loanAssetExtConfig = evaa.data.assetsConfig.get(loanAsset);
+        const collateralAssetExtConfig = evaa.data.assetsConfig.get(collateralAsset);
+        if (!loanAssetExtConfig) throw (`No data for asset ${loanAsset}`);
+        if (!collateralAssetExtConfig) throw (`No data for asset ${collateralAsset}`);
+
+        const loanAssetName = loanAssetPoolConfig.name;
+        const loanAssetDecimals = loanAssetExtConfig.decimals;
+        const collateralAssetName = collateralAssetPoolConfig.name;
+        const collateralAssetDecimals = collateralAssetExtConfig.decimals;
+        return {
+            loanAssetName, loanAssetDecimals, collateralAssetName, collateralAssetDecimals
+        }
+    }
+
+    const dispatcher = new DelayedCallDispatcher(RPC_CALL_DELAY);
+
+    let before_lt = 0;
+    while (true) {
+        const batchResult = await getTransactionsBatch(tonApi, bot, evaa.address, before_lt);
+        const transactions = batchResult?.data?.transactions;
         if (!Array.isArray(transactions) || (transactions.length === 0)) break;
-        const first = await db.isTxExists(transactions[0].hash);
-        if (first) {
+        const firstTxExists = await db.isTxExists(transactions[0].hash);
+        if (firstTxExists) {
             if (sync) break;
             if (before_lt !== 0) {
                 console.log(`Resetting before_lt to 0. Before lt was: ${before_lt}`);
@@ -52,45 +83,68 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
             await sleep(1000);
             continue;
         }
+        console.log('Evaa syncing...');
+        const syncRes = await retry(
+            async () => await evaa.getSync(),
+            {attempts: 5, attemptInterval: 1000}
+        )
+        if (!syncRes.ok) throw (`Failed to sync evaa`);
 
-        for (const transaction of transactions) {
-            await sleep(200);
-            const hash = transaction.hash;
-            const utime = transaction.utime * 1000;
+        console.log('Getting price data...');
+        const pricesRes = await retry(
+            async () => await evaa.getPrices(),
+            {attempts: 15, attemptInterval: 1000}
+        );
+        if (!pricesRes.ok) throw (`Failed to get price data`);
+
+        const prices: Dictionary<bigint, bigint> = pricesRes?.value?.dict;
+
+        for (const tx of transactions) {
+            await sleep(TX_PROCESS_DELAY);
+            const hash = tx.hash;
+            const utime = tx.utime * 1000;
             const result = await db.isTxExists(hash);
             if (result) continue;
             await db.addTransaction(hash, utime);
-            // console.log(`Transaction ${hash} added`);
-            before_lt = transaction.lt;
+            before_lt = tx.lt;
 
-            let op = transaction['in_msg']['op_code'] ? transaction['in_msg']['op_code'] : undefined;
-            if (op === undefined) continue;
-            op = parseInt(op);
+            let _op = tx['in_msg']['op_code'] ? tx['in_msg']['op_code'] : undefined;
+            if (_op === undefined) continue;
+            const op = parseInt(_op);
             let userContractAddress: Address;
-            // master supply | withdraw | liquidate | jetton transfer (eq liquidate) | debug_principal
-            if (op === 0x1 || op === 0x2 || op === 0x3 || op === 0x7362d09c || op === 0xd2) {
-                if (!(transaction.compute_phase.success === true)) continue;
-                const outMsgs = transaction.out_msgs;
+
+            if (op === OP_CODE.MASTER_SUPPLY
+                || op === OP_CODE.MASTER_WITHDRAW
+                || op === OP_CODE.MASTER_LIQUIDATE
+                || op === OP_CODE.JETTON_TRANSFER_NOTIFICATION
+                || op === OP_CODE.DEBUG_PRINCIPALS) {
+
+                if (!(tx.compute_phase.success === true)) continue;
+
+                const outMsgs = tx.out_msgs;
                 if (outMsgs.length !== 1) continue;
                 userContractAddress = Address.parseRaw(outMsgs[0].destination.address);
-                // jetton internal transfer
-                if (op === 0x7362d09c) {
-                    const inAddress = Address.parseRaw(transaction.in_msg.source.address);
+
+                if (op === OP_CODE.JETTON_TRANSFER_NOTIFICATION) {
+                    const inAddress = Address.parseRaw(tx.in_msg.source.address);
                     if (inAddress.equals(userContractAddress)) {
                         console.log(`Contract ${getAddressFriendly(userContractAddress)} is not a user contract`);
                         continue;
                     }
                 }
-            }
-            // master supply success | withdraw collateralized | liquidate satisfied | liquidate unsatisfied
-            else if (op === 0x11a || op === 0x211 || op === 0x311 || op == 0x31f) {
-                if (!(transaction.compute_phase.success === true)) continue;
-                userContractAddress = Address.parseRaw(transaction.in_msg.source.address);
-                if(op === 0x311) {
-                    // master liquidate satisfied
-                    transaction.out_msgs.sort((a, b) => a.created_lt - b.created_lt);
-                    const report = transaction.out_msgs[0];
-                    if(report === undefined) {
+            } else if (op === OP_CODE.MASTER_SUPPLY_SUCCESS
+                || op === OP_CODE.MASTER_WITHDRAW_COLLATERALIZED
+                || op === OP_CODE.MASTER_LIQUIDATE_SATISFIED
+                || op == OP_CODE.MASTER_LIQUIDATE_UNSATISFIED) {
+                console.log('OP_CODE: ', op);
+
+                if (!(tx.compute_phase.success === true)) continue;
+
+                userContractAddress = Address.parseRaw(tx.in_msg.source.address);
+                if (op === OP_CODE.MASTER_LIQUIDATE_SATISFIED) {
+                    tx.out_msgs.sort((a, b) => a.created_lt - b.created_lt);
+                    const report = tx.out_msgs[0];
+                    if (report === undefined) {
                         throw new Error(`Report is undefined for transaction ${hash}`);
                     }
                     const bodySlice = Cell.fromBoc(Buffer.from(report['raw_body'], 'hex'))[0].beginParse();
@@ -98,15 +152,19 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                     bodySlice.loadMaybeRef() // upgrade info
                     bodySlice.loadInt(2) // upgrade exec
                     const reportOp = bodySlice.loadUint(32);
-                    // user liquidate success
-                    if(reportOp != 0x311a) {
+                    if (reportOp != OP_CODE.USER_LIQUIDATE_SUCCESS) {
                         console.log(reportOp.toString(16));
                         console.log(`Report op is not 0x331a for transaction ${hash}`);
                     }
                     const queryID = bodySlice.loadUintBig(64);
                     const task = await db.getTask(queryID);
-                    if(task !== undefined) {
-                        const satisfiedTx = Cell.fromBoc(Buffer.from(transaction['in_msg']['raw_body'], 'hex'))[0].beginParse();
+                    if (task !== undefined) {
+                        const assetsInfo = getAssetsInfo(task.loan_asset, task.collateral_asset);
+                        const {
+                            loanAssetName, collateralAssetName, collateralAssetDecimals
+                        } = assetsInfo;
+
+                        const satisfiedTx = Cell.fromBoc(Buffer.from(tx['in_msg']['raw_body'], 'hex'))[0].beginParse();
                         const extra = satisfiedTx.loadRef().beginParse();
                         extra.loadInt(64); // delta loan principal
                         const loanAmount = extra.loadUintBig(64);
@@ -117,52 +175,42 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                         const collateralRewardAmount = extra.loadUintBig(64); // collateral reward for liquidation
                         await db.liquidateSuccess(queryID);
                         console.log(`Liquidation task (Query ID: ${queryID}) successfully completed`);
-                        const myBalance = await getMyBalance(tonClient, walletAddress);
+
+                        const assetIds = POOL_CONFIG.poolAssetsConfig
+                            .filter(it => it.assetId !== TON_MAINNET.assetId)
+                            .map(it => it.assetId);
+
+                        const myBalance = await getBalances(tonClient, walletAddress, assetIds, JETTON_WALLETS);
                         const localTime = new Date(utime);
-                        const utcTime = new Date(localTime.getTime() + localTime.getTimezoneOffset() * 60000);
-                        await bot.api.sendMessage(serviceChatID, `✅ Liquidation task (Query ID: ${queryID}) successfully completed
-
-<b>Loan asset:</b> ${getAssetName(task.loanAsset)}
-<b>Loan amount:</b> ${getFriendlyAmount(loanAmount, getAssetName(task.loanAsset))}
-<b>Collateral asset:</b> ${getAssetName(task.collateralAsset)}
-<b>Collateral amount:</b> ${getFriendlyAmount(collateralRewardAmount, getAssetName(task.collateralAsset))}
-
-<b>User address:</b> <code>${getAddressFriendly(task.walletAddress)}</code>
-<b>Contract address:</b> <code>${getAddressFriendly(task.contractAddress)}</code>
-<b>Hash</b>: <code>${hash}</code>
-<b>Time:</b> ${utcTime.toLocaleString()} UTC
-
-<b>My balance:</b>
-<b>- TON:</b> ${getFriendlyAmount(myBalance.ton, "TON")}
-<b>- jUSDT:</b> ${getFriendlyAmount(myBalance.jusdt, "jUSDT")}
-<b>- jUSDC:</b> ${getFriendlyAmount(myBalance.jusdc, "jUSDC")}
-<b>- stTON:</b> ${getFriendlyAmount(myBalance.stton, "stTON")}
-<b>- TSTON:</b> ${getFriendlyAmount(myBalance.tston, "tsTON")}
-<b>- USDT:</b> ${getFriendlyAmount(myBalance.usdt, "USDT")}`, { parse_mode: 'HTML' });
+                        await bot.sendMessage(
+                            formatLiquidationSuccess(task, assetsInfo, loanAmount, collateralRewardAmount,
+                                hash, localTime, evaa.address, myBalance, evaa.data.assetsConfig
+                            ), {parse_mode: 'HTML'});
 
                         const isEligibleTask = await checkEligibleSwapTask(
-                            task.collateralAsset, collateralRewardAmount,
-                            task.loanAsset
+                            task.collateral_asset, collateralRewardAmount, task.loan_asset,
+                            evaa.data.assetsConfig, prices
                         );
                         if (isEligibleTask) {
-                            await db.addSwapTask(Date.now(), task.collateralAsset, task.loanAsset, collateralRewardAmount);
-                            await bot.api.sendMessage(serviceChatID, `
-Assigned swap task for exchanging of ${getFriendlyAmount(collateralRewardAmount, getAssetName(task.collateralAsset))} for ${getAssetName(task.loanAsset)}`
-                            );
+                            await db.addSwapTask(Date.now(), task.collateral_asset, task.loan_asset, collateralRewardAmount);
+                            await bot.sendMessage(
+                                formatSwapAssignedMessage(
+                                    loanAssetName, collateralAssetName,
+                                    collateralRewardAmount, collateralAssetDecimals
+                                ), {parse_mode: 'HTML'});
                         } else {
-                            await bot.api.sendMessage(serviceChatID, `
-Swap cancelled (${getFriendlyAmount(collateralRewardAmount, getAssetName(task.collateralAsset))} -> ${getAssetName(task.loanAsset)})`
-                            );
+                            await bot.sendMessage(
+                                formatSwapCanceledMessage(loanAssetName, collateralAssetName,
+                                    collateralRewardAmount, collateralAssetDecimals
+                                ), {parse_mode: 'HTML'});
                         }
                     }
-                }
-                else if (op === 0x31f) {
-                    // master liquidation unsatisfied
-                    const unsatisfiedTx = Cell.fromBoc(Buffer.from(transaction['in_msg']['raw_body'], 'hex'))[0].beginParse();
+                } else if (op === OP_CODE.MASTER_LIQUIDATE_UNSATISFIED) {
+                    const unsatisfiedTx = Cell.fromBoc(Buffer.from(tx['in_msg']['raw_body'], 'hex'))[0].beginParse();
                     const op = unsatisfiedTx.loadUint(32);
                     const queryID = unsatisfiedTx.loadUintBig(64);
                     const task = await db.getTask(queryID);
-                    if(task !== undefined) {
+                    if (task !== undefined) {
                         const userAddress = unsatisfiedTx.loadAddress();
                         const liquidatorAddress = unsatisfiedTx.loadAddress();
                         const assetID = unsatisfiedTx.loadUintBig(256);
@@ -171,181 +219,119 @@ Swap cancelled (${getFriendlyAmount(collateralRewardAmount, getAssetName(task.co
                         const transferredAmount = nextBody.loadUintBig(64);
                         const collateralAssetID = nextBody.loadUintBig(256);
                         const minCollateralAmount = nextBody.loadUintBig(64);
+
+                        const {
+                            loanAssetName: transferedAssetName,
+                            loanAssetDecimals: transferedAssetDecimals,
+                            collateralAssetName, collateralAssetDecimals
+                        } = getAssetsInfo(assetID, collateralAssetID);
+
                         console.log('\n----- Unsatisfied liquidation task -----\n')
-                        console.log(`userAddress: ${getAddressFriendly(userAddress)}
-liquidatorAddress: ${getAddressFriendly(liquidatorAddress)}
-assetID: ${getAssetName(assetID)}
-transferredAmount: ${getFriendlyAmount(transferredAmount, getAssetName(assetID))}
-collateralAssetID: ${getAssetName(collateralAssetID)}
-minCollateralAmount: ${getFriendlyAmount(minCollateralAmount, getAssetName(collateralAssetID))}\n`);
+                        console.log(
+                            formatLiquidationUnsatisfied(task,
+                                transferedAssetName, transferedAssetDecimals,
+                                collateralAssetName, collateralAssetDecimals,
+                                transferredAmount, evaa.address, liquidatorAddress
+                            ));
 
                         const errorCode = nextBody.loadUint(32);
-                        // master_liquidating_too_much
-                        if (errorCode === 0x30F1) {
+                        const errorDescription = getErrorDescription(errorCode);
+                        console.log(`Error: ${errorDescription}`);
+
+                        if (errorCode === ERROR_CODE.MASTER_LIQUIDATING_TOO_MUCH) {
                             const maxAllowedLiquidation = nextBody.loadUintBig(64);
-                            console.log(`Error: ${errorCodes[errorCode]}
-Query ID: ${queryID}
-Max allowed liquidation: ${maxAllowedLiquidation}`)
-                        }
-                        // user_withdraw_in_progress
-                        else if (errorCode === 0x31F0) {
-                            console.log(`Error: ${errorCodes[errorCode]}`);
-                            await bot.api.sendMessage(serviceChatID, `🚨🚨🚨 Liquidation failed. User <code>${getAddressFriendly(userAddress)}<code/> withdraw in process 🚨🚨🚨`,
-                                { parse_mode: 'HTML' });
-                        }
-                        // not_liquidatable
-                        else if (errorCode === 0x31F2) {
-                            console.log(`Error: ${errorCodes[errorCode]}`);
-                        }
-                        // min_collateral_not_satisfied
-                        else if (errorCode === 0x31F3) {
+                            console.log(`Query ID: ${queryID}`);
+                            console.log(`Max allowed liquidation: ${maxAllowedLiquidation}`)
+                        } else if (errorCode === ERROR_CODE.USER_WITHDRAW_IN_PROCESS) {
+                            await bot.sendMessage(
+                                `🚨🚨🚨 Liquidation failed. User <code>${getAddressFriendly(userAddress)}<code/> withdraw in process 🚨🚨🚨`,
+                                {parse_mode: 'HTML'});
+                        } else if (errorCode === ERROR_CODE.NOT_LIQUIDATABLE) { // error message already logged
+                        } else if (errorCode === ERROR_CODE.MIN_COLLATERAL_NOT_SATISFIED) {
                             const collateralAmount = nextBody.loadUintBig(64);
-                            console.log(`Error: ${errorCodes[errorCode]}
-Collateral amount: ${getFriendlyAmount(collateralAmount, getAssetName(collateralAssetID))}`);
-                        }
-                        // user_not_enough_collateral
-                        else if (errorCode === 0x31F4) {
+                            console.log(`Collateral amount: ${getFriendlyAmount(collateralAmount, collateralAssetDecimals, collateralAssetName)}`);
+                        } else if (errorCode === ERROR_CODE.USER_NOT_ENOUGH_COLLATERAL) {
                             const collateralPresent = nextBody.loadUintBig(64);
-                            console.log(`Error: ${errorCodes[errorCode]}
-Collateral present: ${getFriendlyAmount(collateralPresent, getAssetName(collateralAssetID))}`);
-                        }
-                        // user_liquidating_too_much
-                        else if (errorCode === 0x31F5) {
+                            console.log(`Collateral present: ${getFriendlyAmount(collateralPresent, collateralAssetDecimals, collateralAssetName)}`);
+                        } else if (errorCode === ERROR_CODE.USER_LIQUIDATING_TOO_MUCH) {
                             const maxNotTooMuch = nextBody.loadUintBig(64);
-                            console.log(`Error: ${errorCodes[errorCode]}
-Max not too much: ${maxNotTooMuch}`);
-                        }
-                        // master_not_enough_liquidity
-                        else if (errorCode === 0x31F6) {
+                            console.log(`Max not too much: ${maxNotTooMuch}`);
+                        } else if (errorCode === ERROR_CODE.MASTER_NOT_ENOUGH_LIQUIDITY) {
                             const availableLiquidity = nextBody.loadUintBig(64);
-                            console.log(`Error: ${errorCodes[errorCode]}
-Available liquidity: ${availableLiquidity}`);
-                        }
-                        // liquidation_prices_missing
-                        else if (errorCode === 0x31F7) {
-                            console.log(`Error: ${errorCodes[errorCode]}
-Liquidation prices missing`);
+                            console.log(`Available liquidity: ${availableLiquidity}`);
+                        } else if (errorCode === ERROR_CODE.LIQUIDATION_PRICES_MISSING) { // error message already logged
                         }
                         await db.unsatisfyTask(queryID);
                         console.log('\n----- Unsatisfied liquidation task -----\n')
                     }
                 }
-            }
-            else {
+            } else {
                 continue;
             }
-            let userDataResult: GetResult;
-            setTimeout(async () => {
-                if (!userContractAddress) return;
-                const user = await db.getUser(getAddressFriendly(userContractAddress));
 
-                if(user && user.updatedAt > utime) {
-                    await db.updateUserTime(getAddressFriendly(userContractAddress), utime, utime);
+            if (!userContractAddress) continue;
+            const delay = (Date.now() >= utime + USER_UPDATE_DELAY) ? 0 : USER_UPDATE_DELAY;
+            setTimeout(async () => {
+                const userContractFriendly = getAddressFriendly(userContractAddress);
+                const user = await db.getUser(userContractFriendly);
+                if (user && user.updated_at > utime) {
+                    await db.updateUserTime(userContractFriendly, utime, utime);
                     // console.log(`Contract ${getAddressFriendly(userContractAddress)} updated (time)`);
                     return;
                 }
 
-                let attempts = 0;
-                let userDataSuccess = false;
-                while (true) {
-                    try {
-                        // if (Date.now() - lastRpcCall < 200) {
-                        //     await sleep(200);
-                        //     continue;
-                        // }
-                        // lastRpcCall = Date.now();
-                        userDataResult = await tonClient.runMethodWithError(
-                            userContractAddress, 'getAllUserScData'
-                        );
+                const openedUserContract = tonClient.open(EvaaUser.createFromAddress(userContractAddress, POOL_CONFIG));
+                const res = await retry(
+                    async () => {
+                        await dispatcher.makeCall(
+                            async () => {
+                                console.log('SYNCING USER ', userContractFriendly);
+                                return await openedUserContract.getSync(evaa.data.assetsData, evaa.data.assetsConfig, prices);
+                            }
+                        )
+                    }, {attempts: 10, attemptInterval: 2000}
+                );
 
-                        if (userDataResult.exit_code === 0) {
-                            userDataSuccess = true;
-                            break;
-                        }
-
-                        attempts++;
-                        if (attempts > 10) {
-                            console.log(`Problem with user contract ${getAddressFriendly(userContractAddress)}`);
-                            break;
-                        }
-                        await sleep(2000);
-                    } catch (e) {
-                        attempts++;
-                        if (attempts > 10) {
-                            console.log(e);
-                            console.log(`Problem with TonClient. Reindex is needed`);
-                            await bot.api.sendMessage(serviceChatID, `🚨🚨🚨 Problem with TonClient. Reindex is needed 🚨🚨🚨`);
-                            break;
-                        }
-                        if (!isAxiosError(e)) {
-                            console.log(isAxiosError(e));
-                            console.log(e)
-                        }
-                        await sleep(2000);
-                    }
-                }
-                if (!userDataSuccess) {
-                    await bot.api.sendMessage(serviceChatID, `🚨🚨🚨 Problem with user contract ${getAddressFriendly(userContractAddress)} 🚨🚨🚨`);
+                if (!res.ok) {
+                    console.log(`Problem with TonClient. Reindex is needed`);
+                    await bot.sendMessage(`🚨🚨🚨 Problem with TonClient. Reindex is needed 🚨🚨🚨`);
+                    await bot.sendMessage(`🚨🚨🚨 Problem with user contract ${userContractFriendly} 🚨🚨🚨`);
                     return;
                 }
-                if (userDataResult.exit_code !== 0) {
-                    await bot.api.sendMessage(serviceChatID, `🚨🚨🚨 Problem with user contract ${getAddressFriendly(userContractAddress)} 🚨🚨🚨`);
-                    console.log(userDataResult)
+
+                if (openedUserContract.data.type != 'active') {
+                    console.warn(`User ${userContractFriendly} is not active!`);
                     return;
                 }
-                const codeVersion = userDataResult.stack.readNumber();
-                userDataResult.stack.readCell(); // master
-                const userAddress = userDataResult.stack.readCell().beginParse().loadAddress();
-                const principalsDict = userDataResult.stack.readCellOpt()?.beginParse()
-                    .loadDictDirect(Dictionary.Keys.BigUint(256), Dictionary.Values.BigInt(64));
 
-                const userPrincipals: UserPrincipals = {
-                    ton: 0n,
-                    jusdt: 0n,
-                    jusdc: 0n,
-                    stton: 0n,
-                    tston: 0n,
-                    usdt: 0n,
-                };
-                if (principalsDict !== undefined) {
-                    if (principalsDict.has(AssetID.TON))
-                        userPrincipals.ton = principalsDict.get(AssetID.TON);
-                    if (principalsDict.has(AssetID.jUSDT))
-                        userPrincipals.jusdt = principalsDict.get(AssetID.jUSDT);
-                    if (principalsDict.has(AssetID.jUSDC))
-                        userPrincipals.jusdc = principalsDict.get(AssetID.jUSDC);
-                    if (principalsDict.has(AssetID.stTON))
-                        userPrincipals.stton = principalsDict.get(AssetID.stTON);
-                    if (principalsDict.has(AssetID.tsTON))
-                        userPrincipals.tston = principalsDict.get(AssetID.tsTON);
-                    if (principalsDict.has(AssetID.USDT))
-                        userPrincipals.usdt = principalsDict.get(AssetID.USDT);
+                const {
+                    codeVersion,
+                    ownerAddress: userAddress,
+                    principals
+                } = openedUserContract.data;
+
+                const actualUser: User = {
+                    id: 0,
+                    wallet_address: user?.wallet_address ?? getAddressFriendly(userAddress),
+                    contract_address: user?.contract_address ?? userContractFriendly,
+                    code_version: codeVersion,
+                    created_at: Math.min(utime, user?.created_at ?? Date.now()),
+                    updated_at: Math.max(utime, user?.updated_at ?? 0),
+                    actualized_at: Date.now(),
+                    principals: principals,
+                    state: 'active',
+                }
+                const userRes = await retry(
+                    async () => await db.insertOrUpdateUser(actualUser),
+                    DATABASE_DEFAULT_RETRY_OPTIONS
+                );
+                if (!userRes) {
+                    const message = `[Indexer]: Failed to actualize user ${userContractFriendly}`;
+                    console.warn(message);
+                    await bot.sendMessage(message);
                 }
 
-                if (user) {
-                    if (user.createdAt > utime)
-                        user.createdAt = utime;
-                    if (user.updatedAt < utime)
-                        user.updatedAt = utime;
-                    if (user.codeVersion != codeVersion)
-                        user.codeVersion = codeVersion;
-                    await db.updateUser(getAddressFriendly(userContractAddress), user.codeVersion,
-                        user.createdAt, user.updatedAt, userPrincipals.ton,
-                        userPrincipals.jusdt, userPrincipals.jusdc, userPrincipals.stton, userPrincipals.tston, userPrincipals.usdt);
-                    // console.log(`Contract ${getAddressFriendly(userContractAddress)} updated`);
-                }
-                else {
-                    try {
-                        await db.addUser(getAddressFriendly(userAddress), getAddressFriendly(userContractAddress), codeVersion,
-                            utime, utime, userPrincipals.ton, userPrincipals.jusdt, userPrincipals.jusdc, userPrincipals.stton, userPrincipals.tston, userPrincipals.usdt);
-                        console.log(`Contract ${getAddressFriendly(userContractAddress)} added`);
-                    } catch (e) {
-                        await db.updateUser(getAddressFriendly(userContractAddress), codeVersion,
-                            utime, utime, userPrincipals.ton, userPrincipals.jusdt, userPrincipals.jusdc, userPrincipals.stton, userPrincipals.tston, userPrincipals.usdt);
-                        // console.log(`Contract ${getAddressFriendly(userContractAddress)} updated`);
-                    }
-                }
-            }, 60000);
+            }, delay);
         }
 
         console.log(`Before lt: ${before_lt}`);

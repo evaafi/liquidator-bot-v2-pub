@@ -1,16 +1,15 @@
-import {sleep} from "./common";
+import {sleep} from "./process";
 
 export type AsyncLambda<T> = () => Promise<T>;
 
-export type DummyFunction = () => {};
-const DUMMY_FUNCTION_INSTANCE = () => {
+const DUMMY_FUNCTION_INSTANCE = async (): Promise<void> => {
 };
 
 type RetryParams = {
     attempts: number,
     attemptInterval: number,
     verbose: boolean,
-    on_fail: DummyFunction,
+    on_fail: typeof DUMMY_FUNCTION_INSTANCE,
 }
 
 const DEFAULT_RETRY_PARAMS = {
@@ -28,7 +27,7 @@ const DEFAULT_RETRY_PARAMS = {
  * @returns
  */
 export async function retry<T>(lambda: AsyncLambda<T>, params: any = {}) {
-    let value = null;
+    let value: any = null;
     let ok = false;
     const {attempts, attemptInterval, verbose, on_fail}: RetryParams = {...DEFAULT_RETRY_PARAMS, ...params};
     let n = attempts;
@@ -39,7 +38,7 @@ export async function retry<T>(lambda: AsyncLambda<T>, params: any = {}) {
             ok = true;
         } catch (e) {
             if (typeof on_fail === 'function') {
-                on_fail();
+                await on_fail();
             }
             if (verbose) {
                 console.log(e);
