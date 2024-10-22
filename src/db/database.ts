@@ -2,7 +2,7 @@ import {Database, open} from "sqlite";
 import sqlite3 from 'sqlite3';
 import {emptyPrincipals, PrincipalsDict, Task, User} from "./types";
 import {retry} from "../util/retry";
-import {PoolAssetConfig} from "@evaafi/sdkv6";
+import {PoolAssetConfig} from "@evaafi/sdk";
 import {makeCreateUsersScript, makeProcessUserScript} from "./helpers";
 
 const seconds = (s: number) => s * 1000;
@@ -18,7 +18,7 @@ export const TTL = {
 }
 
 const DATABASE_RETRY_TIMEOUT = seconds(1);
-const DATABASE_RETRY_ATTEMPTS = 3;
+const DATABASE_RETRY_ATTEMPTS = 10;
 export const DATABASE_DEFAULT_RETRY_OPTIONS = {
     attempts: DATABASE_RETRY_ATTEMPTS,
     attemptInterval: DATABASE_RETRY_TIMEOUT
@@ -36,7 +36,7 @@ export class MyDatabase {
         this.COLUMNS.forEach((col, index) => {
             const id = this.ASSET_IDS[index];
             const amount = row[col];
-            principals.set(id, amount);
+            principals.set(id, BigInt(amount).valueOf());
         });
         return principals;
     }

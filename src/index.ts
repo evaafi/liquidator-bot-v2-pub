@@ -6,7 +6,6 @@ import {
     IS_TESTNET,
     makeTonClient,
     POOL_CONFIG,
-    SERVICE_CHAT_ID,
     TON_API_ENDPOINT
 } from "./config";
 import axios, {AxiosInstance} from "axios";
@@ -18,7 +17,7 @@ import {mnemonicToWalletKey} from "@ton/crypto";
 import * as https from "https";
 import {sleep} from "./util/process";
 import {clearInterval} from "node:timers";
-import {Evaa} from "@evaafi/sdkv6";
+import {Evaa} from "@evaafi/sdk";
 import {retry} from "./util/retry";
 import {Messenger} from "./lib/bot";
 import {HighloadWalletV2} from "./lib/highload_contract_v2";
@@ -38,12 +37,13 @@ function makeTonApi(endpoint, apiKey: string) {
 
 async function main(bot: Messenger) {
     configDotenv();
-    const db = new MyDatabase(POOL_CONFIG.poolAssetsConfig);
+    const poolConfig =  POOL_CONFIG;
+    const db = new MyDatabase(poolConfig.poolAssetsConfig);
     await db.init(DB_PATH);
 
     const tonApi: AxiosInstance = makeTonApi(TON_API_ENDPOINT, process.env.TONAPI_KEY);
     const tonClient: TonClient = await makeTonClient();
-    const evaa: OpenedContract<Evaa> = tonClient.open(new Evaa({debug: IS_TESTNET, poolConfig: POOL_CONFIG}));
+    const evaa: OpenedContract<Evaa> = tonClient.open(new Evaa({debug: IS_TESTNET, poolConfig}));
     const res = await retry(
         async () => await evaa.getSync(),
         {attempts: 10, attemptInterval: 5000}
@@ -91,7 +91,7 @@ async function main(bot: Messenger) {
         }
         validating = true;
 
-        validateBalances(db, evaa, bot)
+        validateBalances(db, evaa, bot, POOL_CONFIG)
             .catch(e => {
                 console.log(e);
                 if (JSON.stringify(e).length == 2) {

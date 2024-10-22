@@ -2,7 +2,7 @@ import {Address} from "@ton/core";
 import {ASSET_ID} from "./steady_config";
 import {TonClient} from "@ton/ton";
 import {configDotenv} from "dotenv";
-import {MAINNET_LP_POOL_CONFIG, MAINNET_POOL_CONFIG} from "@evaafi/sdkv6";
+import {MAINNET_LP_POOL_CONFIG, MAINNET_POOL_CONFIG} from "@evaafi/sdk";
 
 export const HIGHLOAD_ADDRESS = Address.parse('EQDo27P-CAam_G2xmQd4CxnFYjY2FKPmmKEc8wTCh4c33Mhi');
 // jetton wallets of specified highloadAddress
@@ -37,8 +37,8 @@ export async function makeTonClient() {
 }
 
 export const USER_UPDATE_DELAY = 60_000; // 60 seconds
-export const TX_PROCESS_DELAY = 100; // ms
-export const RPC_CALL_DELAY = 30; // ms
+export const TX_PROCESS_DELAY = 40; // ms
+export const RPC_CALL_DELAY = 20; // ms
 
-// export const POOL_CONFIG = MAINNET_LP_POOL_CONFIG; // for main pool v5
+// export const POOL_CONFIG = MAINNET_LP_POOL_CONFIG; 
 export const POOL_CONFIG = MAINNET_POOL_CONFIG;

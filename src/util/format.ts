@@ -2,7 +2,7 @@ import {Address} from "@ton/core";
 import {IS_TESTNET, POOL_CONFIG} from "../config";
 import {WalletBalances} from "../lib/balances";
 import {Dictionary} from "@ton/ton";
-import {ExtendedAssetsConfig} from "@evaafi/sdkv6";
+import {ExtendedAssetsConfig} from "@evaafi/sdk";
 
 export function getAddressFriendly(addr: Address) {
     return IS_TESTNET ?

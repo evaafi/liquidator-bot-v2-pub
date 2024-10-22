@@ -1,6 +1,6 @@
 import {DATABASE_DEFAULT_RETRY_OPTIONS, MyDatabase} from "../../db/database";
 import {AxiosInstance, AxiosResponse} from "axios";
-import {JETTON_WALLETS, POOL_CONFIG, RPC_CALL_DELAY, TX_PROCESS_DELAY, USER_UPDATE_DELAY} from "../../config";
+import {JETTON_WALLETS, RPC_CALL_DELAY, TX_PROCESS_DELAY, USER_UPDATE_DELAY} from "../../config";
 import {
     checkEligibleSwapTask,
     DelayedCallDispatcher,
@@ -18,7 +18,7 @@ import {Address, Dictionary} from "@ton/core";
 import {Cell, OpenedContract, TonClient} from "@ton/ton";
 import {getAddressFriendly, getFriendlyAmount} from "../../util/format";
 import {getBalances} from "../../lib/balances";
-import {Evaa, EvaaUser, TON_MAINNET} from "@evaafi/sdkv6";
+import {Evaa, EvaaUser, TON_MAINNET} from "@evaafi/sdk";
 import {retry} from "../../util/retry";
 import {User} from "../../db/types";
 import {Messenger} from "../../lib/bot";
@@ -47,8 +47,8 @@ export async function getTransactionsBatch(tonApi: AxiosInstance, bot: Messenger
 
 export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, tonClient: TonClient, bot: Messenger, evaa: OpenedContract<Evaa>, walletAddress: Address, sync = false) {
     const getAssetsInfo = (loanAsset: bigint, collateralAsset: bigint) => {
-        const loanAssetPoolConfig = POOL_CONFIG.poolAssetsConfig.find(it => it.assetId === loanAsset);
-        const collateralAssetPoolConfig = POOL_CONFIG.poolAssetsConfig.find(it => it.assetId === collateralAsset);
+        const loanAssetPoolConfig = evaa.poolConfig.poolAssetsConfig.find(it => it.assetId === loanAsset);
+        const collateralAssetPoolConfig = evaa.poolConfig.poolAssetsConfig.find(it => it.assetId === collateralAsset);
         if (!loanAssetPoolConfig) throw (`Asset ${loanAsset} is not supported`);
         if (!collateralAssetPoolConfig) throw (`Asset ${collateralAsset} is not supported`);
 
@@ -136,7 +136,6 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                 || op === OP_CODE.MASTER_WITHDRAW_COLLATERALIZED
                 || op === OP_CODE.MASTER_LIQUIDATE_SATISFIED
                 || op == OP_CODE.MASTER_LIQUIDATE_UNSATISFIED) {
-                console.log('OP_CODE: ', op);
 
                 if (!(tx.compute_phase.success === true)) continue;
 
@@ -176,7 +175,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                         await db.liquidateSuccess(queryID);
                         console.log(`Liquidation task (Query ID: ${queryID}) successfully completed`);
 
-                        const assetIds = POOL_CONFIG.poolAssetsConfig
+                        const assetIds = evaa.poolConfig.poolAssetsConfig
                             .filter(it => it.assetId !== TON_MAINNET.assetId)
                             .map(it => it.assetId);
 
@@ -189,7 +188,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
 
                         const isEligibleTask = await checkEligibleSwapTask(
                             task.collateral_asset, collateralRewardAmount, task.loan_asset,
-                            evaa.data.assetsConfig, prices
+                            evaa.data.assetsConfig, prices, evaa.poolConfig
                         );
                         if (isEligibleTask) {
                             await db.addSwapTask(Date.now(), task.collateral_asset, task.loan_asset, collateralRewardAmount);
@@ -280,7 +279,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                     return;
                 }
 
-                const openedUserContract = tonClient.open(EvaaUser.createFromAddress(userContractAddress, POOL_CONFIG));
+                const openedUserContract = tonClient.open(EvaaUser.createFromAddress(userContractAddress, evaa.poolConfig));
                 const res = await retry(
                     async () => {
                         await dispatcher.makeCall(

@@ -1,8 +1,17 @@
-import {Dictionary} from "@ton/ton";
-import {COLLATERAL_SELECT_PRIORITY, LT_SCALE, MIN_WORTH_SWAP_LIMIT, NO_PRIORITY_SELECTED} from "../../steady_config";
-import {POOL_CONFIG} from "../../config";
+import {Cell, Dictionary} from "@ton/ton";
+import {COLLATERAL_SELECT_PRIORITY, MIN_WORTH_SWAP_LIMIT, NO_PRIORITY_SELECTED} from "../../config";
 import {bigAbs} from "../../util/math";
-// import {PoolAssetsConfig, PoolConfig} from "@evaafi/sdkv6";
+import {
+    ExtendedAssetsConfig,
+    ExtendedAssetsData,
+    MasterConstants,
+    PoolConfig,
+    presentValue,
+    SelectedAssets
+} from "@evaafi/sdk";
+import {MyDatabase} from "../../db/database";
+import {User} from "../../db/types";
+import {retry} from "../../util/retry";
 
 type MinConfig = {
     decimals: bigint,
@@ -12,55 +21,23 @@ type MinConfig = {
 };
 type MinData = { sRate: bigint, bRate: bigint };
 
-// export function selectLiquidationParameters<Config extends MinConfig, Data extends MinData>(
-//     principalsDict: Dictionary<bigint, bigint>,
-//     pricesDict: Dictionary<bigint, bigint>,
-//     assetsConfigDict: Dictionary<bigint, Config>,
-//     assetsDataDict: Dictionary<bigint, Data>,
-//     poolAssets: PoolAssetsConfig) {
-//
-//     const loanAssets: PoolAssetsConfig = [];
-//     const collateralAssets: PoolAssetsConfig = [];
-//
-//     for (const asset of poolAssets) {
-//         if (!assetsDataDict.has(asset.assetId)) continue;
-//         if (!assetsConfigDict.has(asset.assetId)) continue;
-//         if (!principalsDict.has(asset.assetId)) continue;
-//         if (!pricesDict.has(asset.assetId)) continue;
-//
-//         const assetData = assetsDataDict.get(asset.assetId)!;
-//         const assetConfig = assetsConfigDict.get(asset.assetId)!;
-//         const principal = principalsDict.get(asset.assetId)!;
-//         const price = pricesDict.get(asset.assetId)!;
-//
-//         const value =
-//     }
-// }
 
-export function addLiquidationReserve(amount: bigint, factorScale: bigint, reserveFactor: bigint): bigint {
-    return amount * factorScale * 1000_000n / (factorScale - reserveFactor) / 1000_000n;
-}
-
-export function selectLiquidationAssets<
-    Config extends MinConfig,
-    Data extends MinData
->(
+export function selectLiquidationAssets<Config extends MinConfig, Data extends MinData>(
     principalsDict: Dictionary<bigint, bigint>,
     pricesDict: Dictionary<bigint, bigint>,
     assetConfigDict: Dictionary<bigint, Config>,
     assetsDataDict: Dictionary<bigint, Data>,
-) {
+    poolConfig: PoolConfig
+): SelectedAssets {
     let collateralValue = 0n;
     let collateralId = 0n;
     let loanValue = 0n;
     let loanId = 0n;
-    let totalDebt = 0n;
-    let totalLimit = 0n;
 
     let priority_collateral_id = 0n;
     let priority_collateral_value = 0n;
     let selected_priority = NO_PRIORITY_SELECTED;
-    const FACTOR_SCALE = POOL_CONFIG.masterConstants.FACTOR_SCALE
+    const FACTOR_SCALE = poolConfig.masterConstants.FACTOR_SCALE
 
     for (const assetId of principalsDict.keys()) {
         const principal: bigint = principalsDict.get(assetId)!;
@@ -79,8 +56,7 @@ export function selectLiquidationAssets<
             console.warn(`Config for assetId ${assetId} is not defined, skipping`);
             continue;
         }
-        const {decimals, liquidationThreshold} = assetConfig;
-        const assetScale = 10n ** decimals;
+        const assetScale = 10n ** assetConfig.decimals;
         let balance = 0n;
         if (principal > 0n) {
             balance = (BigInt(principal) * BigInt(assetData.sRate) / BigInt(FACTOR_SCALE)).valueOf();
@@ -88,28 +64,25 @@ export function selectLiquidationAssets<
             balance = (BigInt(principal) * BigInt(assetData.bRate) / BigInt(FACTOR_SCALE)).valueOf();
         }
 
-        const assetWorth = bigAbs(balance) * assetPrice / assetScale;
+        const assetValue = bigAbs(balance) * assetPrice / assetScale;
         if (balance > 0n) {
-            totalLimit += assetWorth * liquidationThreshold / LT_SCALE;
-
             // priority based collateral selection logic
-            if (assetWorth > MIN_WORTH_SWAP_LIMIT) {
+            if (assetValue > MIN_WORTH_SWAP_LIMIT) {
                 const priority = COLLATERAL_SELECT_PRIORITY.get(assetId);
                 if ((priority !== undefined) && (selected_priority > priority)) {
                     selected_priority = priority;
                     priority_collateral_id = assetId;
-                    priority_collateral_value = assetWorth;
+                    priority_collateral_value = assetValue;
                 }
             }
 
-            if (assetWorth > collateralValue) {
-                collateralValue = assetWorth;
+            if (assetValue > collateralValue) {
+                collateralValue = assetValue;
                 collateralId = assetId;
             }
         } else if (balance < 0n) {
-            totalDebt += assetWorth;
-            if (assetWorth > loanValue) {
-                loanValue = assetWorth;
+            if (assetValue > loanValue) {
+                loanValue = assetValue;
                 loanId = assetId;
             }
         }
@@ -122,8 +95,39 @@ export function selectLiquidationAssets<
     }
 
     return {
-        collateralValue, collateralId,
-        loanValue, loanId,
-        totalDebt, totalLimit,
+        selectedCollateralId: collateralId,
+        selectedCollateralValue: collateralValue,
+        selectedLoanId: loanId,
+        selectedLoanValue: loanValue,
     }
+}
+
+export async function addLiquidationTask(
+    db: MyDatabase, user: User,
+    loanAssetId: bigint, collateralAssetId: bigint,
+    liquidationAmount: bigint, minCollateralAmount: bigint,
+    pricesCell: Cell) {
+
+    const queryID = BigInt(Date.now());
+
+    console.log('ADDING LIQUIDATE TASK TO DB: ', {
+        user: user.wallet_address,
+        loanAssetId,
+        collateralAssetId,
+        liquidationAmount,
+        minCollateralAmount,
+        queryID
+    });
+
+    // db might be busy, retry 5 times, wait 1 sec before retry
+    const res = await retry(async () => {
+            await db.addTask(
+                user.wallet_address, user.contract_address, Date.now(),
+                loanAssetId, collateralAssetId,
+                liquidationAmount, minCollateralAmount,
+                pricesCell.toBoc().toString('base64'),
+                queryID);
+        }, {attempts: 5, attemptInterval: 1000}
+    );
+    if (!res.ok) throw (`Failed to add db task for user ${user.wallet_address}`);
 }

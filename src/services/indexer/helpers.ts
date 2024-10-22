@@ -1,6 +1,6 @@
 import {Address} from "@ton/core";
-import {BANNED_ASSETS_FROM, BANNED_ASSETS_TO, MIN_WORTH_SWAP_LIMIT, POOL_CONFIG} from "../../config";
-import {ExtendedAssetsConfig} from "@evaafi/sdkv6";
+import {BANNED_ASSETS_FROM, BANNED_ASSETS_TO, MIN_WORTH_SWAP_LIMIT} from "../../config";
+import {ExtendedAssetsConfig, PoolConfig} from "@evaafi/sdk";
 import {Dictionary} from "@ton/ton";
 import {sleep} from "../../util/process";
 import {formatBalances, getAddressFriendly, getFriendlyAmount} from "../../util/format";
@@ -32,15 +32,16 @@ export function isBannedSwapTo(assetID: bigint): boolean {
  */
 export async function checkEligibleSwapTask(
     assetIdFrom: bigint, assetAmount: bigint, assetIdTo: bigint,
-    extAssetsConfig: ExtendedAssetsConfig, prices: Dictionary<bigint, bigint>
+    extAssetsConfig: ExtendedAssetsConfig, prices: Dictionary<bigint, bigint>,
+    poolConfig: PoolConfig
 ): Promise<boolean> {
     if (prices === undefined) {
         console.error(`Failed to obtain prices from middleware!`);
         return false;
     }
 
-    const assetFrom = POOL_CONFIG.poolAssetsConfig.find(asset => (asset.assetId === assetIdFrom));
-    const assetTo = POOL_CONFIG.poolAssetsConfig.find(asset => (asset.assetId === assetIdTo));
+    const assetFrom = poolConfig.poolAssetsConfig.find(asset => (asset.assetId === assetIdFrom));
+    const assetTo = poolConfig.poolAssetsConfig.find(asset => (asset.assetId === assetIdTo));
     const assetFromConfig = extAssetsConfig.get(assetIdFrom);
 
     if (!assetFrom) {

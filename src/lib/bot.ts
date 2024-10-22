@@ -23,4 +23,8 @@ export class Messenger {
             if (this?.options?.throwOnFailure) throw e;
         }
     }
+
+    log(message: string): void {
+        console.log(message);
+    }
 }

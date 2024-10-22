@@ -1,31 +1,21 @@
-import {Cell, OpenedContract} from "@ton/ton";
+import {OpenedContract} from "@ton/ton";
 import {MyDatabase} from "../../db/database";
 import {isAxiosError} from "axios";
-import {User} from "../../db/types";
-import {bigIntMax, bigIntMin} from "../../util/math";
-import {Evaa, TON_MAINNET} from "@evaafi/sdkv6";
+import {
+    calculateHealthParams,
+    calculateLiquidationAmounts,
+    Evaa,
+    findAssetById,
+    PoolConfig,
+    selectGreatestAssets,
+    TON_MAINNET
+} from "@evaafi/sdk";
 import {Messenger} from "../../lib/bot";
-
-import {LB_SCALE, LIQUIDATION_STRATEGIC_LIMIT, POOL_CONFIG,} from "../../config";
 import {retry} from "../../util/retry";
 import {PriceData} from "./types";
-import {addLiquidationReserve, selectLiquidationAssets} from "./helpers";
+import {addLiquidationTask, selectLiquidationAssets} from "./helpers";
 
-export async function addLiquidationTask(
-    db: MyDatabase, user: User,
-    loanAssetId: bigint, collateralAssetId: bigint,
-    liquidationAmount: bigint, minCollateralAmount: bigint,
-    pricesCell: Cell) {
-    const queryID = BigInt(Date.now());
-    await db.addTask(
-        user.wallet_address, user.contract_address, Date.now(),
-        loanAssetId, collateralAssetId,
-        liquidationAmount, minCollateralAmount,
-        pricesCell.toBoc().toString('base64'),
-        queryID);
-}
-
-export async function validateBalances(db: MyDatabase, evaa: OpenedContract<Evaa>, bot: Messenger) {
+export async function validateBalances(db: MyDatabase, evaa: OpenedContract<Evaa>, bot: Messenger, poolConfig: PoolConfig) {
     try {
         // console.log(`Start validating balances at ${new Date().toLocaleString()}`)
         const users = await db.getUsers();
@@ -46,68 +36,88 @@ export async function validateBalances(db: MyDatabase, evaa: OpenedContract<Evaa
         if (!evaaSyncRes.ok) throw (`Failed to sync evaa`);
 
         const assetsDataDict = evaa.data.assetsData;
-        const assetConfigDict = evaa.data.assetsConfig;
-        // const masterConstants = evaa.data.masterConfig.
+        const assetsConfigDict = evaa.data.assetsConfig;
 
         for (const user of users) {
             if (await db.isTaskExists(user.wallet_address)) {
-                console.log(`Task for ${user.wallet_address} already exists. Skipping...`);
+                console.log(`Task for ${user.wallet_address} already exists, skipping...`);
                 continue;
             }
+
+            const healthParams = calculateHealthParams({
+                assetsData: evaa.data.assetsData,
+                assetsConfig: evaa.data.assetsConfig,
+                principals: user.principals,
+                prices: pricesDict,
+                poolConfig
+            });
+
+            if (!healthParams.isLiquidatable) {
+                continue;
+            }
+
+            if (healthParams.totalSupply === 0n) {
+                const message = `[Validator]: Problem with user ${user.wallet_address}: account doesn't have collateral at all, and will be blacklisted`;
+                console.warn(message);
+                await db.blacklistUser(user.wallet_address);
+                console.log(message);
+                continue;
+            }
+
+            // const {selectedLoanId, selectedCollateralId} = selectGreatestAssets(
+            //     user.principals, pricesDict, assetsConfigDict, assetsDataDict, poolConfig
+            // );
+
+            // priority assets
+            const {selectedLoanId, selectedCollateralId} = selectLiquidationAssets(
+                user.principals, pricesDict, assetsConfigDict, assetsDataDict, poolConfig
+            );
+
+            const loanAsset = findAssetById(selectedLoanId, poolConfig);
+            const collateralAsset = findAssetById(selectedCollateralId, poolConfig);
+            const {totalSupply, totalDebt} = healthParams;
             const {
-                collateralValue, collateralId,
-                loanValue, loanId,
-                totalDebt, totalLimit,
-            } = selectLiquidationAssets(user.principals, pricesDict, assetConfigDict, assetsDataDict);
+                maxLiquidationAmount, maxCollateralRewardAmount
+            } = calculateLiquidationAmounts(
+                loanAsset, collateralAsset,
+                totalSupply, totalDebt,
+                user.principals, pricesDict,
+                assetsDataDict, assetsConfigDict,
+                poolConfig.masterConstants
+            );
 
-            if (totalLimit < totalDebt) {
-                if (collateralId === 0n) {
-                    const message = `[Validator]: Problem with user ${user.wallet_address}: collateral not selected, user was blacklisted`;
-                    console.warn(message);
-                    await db.blacklistUser(user.wallet_address);
-                    bot.sendMessage(message);
-                    continue;
-                }
+            const minCollateralAmount = maxCollateralRewardAmount; // liquidator will deduct dust
 
-                const collateralConfig = assetConfigDict.get(collateralId);
-                const loanConfig = assetConfigDict.get(loanId);
-                const liquidationBonus = collateralConfig.liquidationBonus;
-                const collateralScale = 10n ** collateralConfig.decimals;
-                const loanScale = 10n ** loanConfig.decimals;
-                const loanPrice: bigint = pricesDict.get(loanId);
-                const collateralPrice: bigint = pricesDict.get(collateralId);
+            if (!assetsConfigDict.has(collateralAsset.assetId)) {
+                console.log(`No config for collateral ${collateralAsset.name}, skipping...`);
+                continue;
+            }
+            const collateralConfig = assetsConfigDict.get(collateralAsset.assetId)!;
+            const collateralScale = 10n ** collateralConfig.decimals;
 
-                let liquidationAmount = bigIntMin(
-                    bigIntMax(
-                        collateralValue / 4n, bigIntMin(collateralValue, LIQUIDATION_STRATEGIC_LIMIT)
-                    ) * loanScale * LB_SCALE / liquidationBonus / loanPrice,
+            if (!pricesDict.has(collateralAsset.assetId)) {
+                console.log(`No price for collateral ${collateralAsset.name}, skipping...`);
+                continue;
+            }
+            const collateralPrice = pricesDict.get(collateralAsset.assetId)!;
+            if (collateralPrice <= 0) {
+                console.log(`Invalid price for collateral ${collateralAsset.name}, skipping...`);
+                continue;
+            }
 
-                    loanValue * loanScale / loanPrice
+            const MIN_ALLOWED_COLLATERAL_WORTH = pricesDict.get(TON_MAINNET.assetId); // 1 TON worth in 10**9 decimals
+            if (minCollateralAmount * collateralPrice >= MIN_ALLOWED_COLLATERAL_WORTH * collateralScale) {
+                await addLiquidationTask(db, user,
+                    loanAsset.assetId, collateralAsset.assetId,
+                    maxLiquidationAmount, minCollateralAmount,
+                    dataCell
                 );
-
-                const liquidationReserveFactor = loanConfig.liquidationReserveFactor;
-                const reserveFactorScale = POOL_CONFIG.masterConstants.ASSET_LIQUIDATION_RESERVE_FACTOR_SCALE;
-
-                let minCollateralAmount = liquidationAmount * loanPrice *
-                    liquidationBonus / LB_SCALE *
-                    collateralScale / collateralPrice / loanScale;
-
-                // TODO: add dust value to liquidationAmount to prevent dusts in principals
-                liquidationAmount = addLiquidationReserve(liquidationAmount, reserveFactorScale, liquidationReserveFactor);
-                minCollateralAmount = minCollateralAmount * 99n / 100n;
-
-                if (minCollateralAmount >= pricesDict.get(TON_MAINNET.assetId) * collateralScale / collateralPrice) {
-                    await addLiquidationTask(db, user, loanId, collateralId, liquidationAmount, minCollateralAmount, dataCell);
-                    await bot.sendMessage(`Task for ${user.wallet_address} added`);
-                    console.log(`Task for ${user.wallet_address} added`);
-                } else {
-                    // console.log(`Not enough collateral for ${user.wallet_address}`);
-                }
+                await bot.sendMessage(`Task for ${user.wallet_address} added`);
+                console.log(`Task for ${user.wallet_address} added`);
             } else {
-
+                // console.log(`Not enough collateral for ${user.wallet_address}`);
             }
         }
-
         // console.log(`Finish validating balances at ${new Date().toLocaleString()}`)
     } catch (e) {
         if (!isAxiosError(e)) {

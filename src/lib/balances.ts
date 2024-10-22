@@ -2,7 +2,7 @@ import {Address, Dictionary, TonClient} from "@ton/ton";
 import {retry} from "../util/retry";
 import {notDefined} from "../util/logic";
 import {checkAddressState} from "../util/blockchain";
-import {TON_MAINNET} from "@evaafi/sdkv6";
+import {TON_MAINNET} from "@evaafi/sdk";
 
 export type WalletBalances = Dictionary<bigint, bigint>;
 
@@ -42,7 +42,7 @@ export async function getBalances(
         })
 
         return balance;
-    }, {attempts: 5, attemptInterval: 500});
+    }, {attempts: 10    , attemptInterval: 1000});
 
     if (!balancesResult.ok) {
         throw new Error("Failed to get balances");
