@@ -23,7 +23,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "@evaafi/sdk": "0.6.1",
+    "@evaafi/sdk": "^0.6.1-a",
     "@iota/sdk": "^1.1.0",
     "@orbs-network/ton-access": "^2.3.3",
     "@ton/core": "0.56.0",

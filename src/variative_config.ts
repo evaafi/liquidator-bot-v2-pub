@@ -40,5 +40,5 @@ export const USER_UPDATE_DELAY = 60_000; // 60 seconds
 export const TX_PROCESS_DELAY = 40; // ms
 export const RPC_CALL_DELAY = 20; // ms
 
-// export const POOL_CONFIG = MAINNET_LP_POOL_CONFIG; 
+// export const POOL_CONFIG = MAINNET_LP_POOL_CONFIG; // for main pool v5
 export const POOL_CONFIG = MAINNET_POOL_CONFIG;

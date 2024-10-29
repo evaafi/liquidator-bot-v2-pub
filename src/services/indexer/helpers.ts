@@ -1,12 +1,13 @@
-import {Address} from "@ton/core";
+import {Address, Slice} from "@ton/core";
 import {BANNED_ASSETS_FROM, BANNED_ASSETS_TO, MIN_WORTH_SWAP_LIMIT} from "../../config";
-import {ExtendedAssetsConfig, PoolConfig} from "@evaafi/sdk";
-import {Dictionary} from "@ton/ton";
+import {Evaa, ExtendedAssetsConfig, PoolConfig} from "@evaafi/sdk";
+import {Cell, Dictionary, OpenedContract} from "@ton/ton";
 import {sleep} from "../../util/process";
 import {formatBalances, getAddressFriendly, getFriendlyAmount} from "../../util/format";
 import {Task} from "../../db/types";
 import {LiquidationAssetsInfo} from "./types";
 import {WalletBalances} from "../../lib/balances";
+import {unpackPrices} from "../../util/prices";
 
 export function makeGetAccountTransactionsRequest(address: Address, before_lt: number) {
     if (before_lt === 0)
@@ -144,23 +145,45 @@ export class DelayedCallDispatcher {
 
 export function formatLiquidationSuccess(
     task: Task, assetsInfo: LiquidationAssetsInfo,
-    loanAmount: bigint, collateralRewardAmount: bigint,
+    loanAmount: bigint, protocolGift: bigint, collateralRewardAmount: bigint,
     txHash: string, txTime: Date, masterAddress: Address,
-    myBalance: WalletBalances, assetsConfig: ExtendedAssetsConfig) {
+    myBalance: WalletBalances,
+    assetsConfig: ExtendedAssetsConfig,
+    prices: Dictionary<bigint, bigint>) {
 
     const {
         loanAssetName, loanAssetDecimals,
         collateralAssetName, collateralAssetDecimals
     } = assetsInfo;
 
-    const {query_id: queryID, wallet_address: walletAddress, contract_address: contractAddress} = task;
+    const {
+        query_id: queryID,
+        wallet_address: walletAddress,
+        contract_address: contractAddress,
+        loan_asset: loanId,
+        collateral_asset: collateralId,
+    } = task;
+
+    const loanScale = 10n ** loanAssetDecimals;
+    const collateralScale = 10n ** collateralAssetDecimals;
+    const loanPrice = prices.get(loanId)!
+    const collateralPrice = prices.get(collateralId)!;
+    const transferredLoan = loanAmount + protocolGift;
+    const transferredValue = transferredLoan * loanPrice / loanScale;
+    const receivedValue = collateralRewardAmount * collateralPrice / collateralScale;
+    const profit = receivedValue - transferredValue;
+    const profitMargin = (Number(profit * 100n) / Number(transferredValue)).toFixed(2);
 
     return `✅ Liquidation task (Query ID: ${queryID}) successfully completed
 <b>Evaa master address: </b> ${getAddressFriendly(masterAddress)}
 <b>Loan asset:</b> ${loanAssetName}
 <b>Loan amount:</b> ${getFriendlyAmount(loanAmount, loanAssetDecimals, loanAssetName)}
+<b>Protocol gift: </b> ${getFriendlyAmount(protocolGift, loanAssetDecimals, loanAssetName)}
 <b>Collateral asset:</b> ${collateralAssetName}
 <b>Collateral amount:</b> ${getFriendlyAmount(collateralRewardAmount, collateralAssetDecimals, collateralAssetName)}
+<b>Transferred value: </b> ${getFriendlyAmount(transferredValue, 9n, 'USD')} 
+<b>Earned: </b> ${getFriendlyAmount(profit, 9n, 'USD')}
+<b>Profit margin: </b> ${profitMargin}%
 
 <b>User address:</b> <code>${getAddressFriendly(Address.parse(walletAddress))}</code>
 <b>Contract address:</b> <code>${getAddressFriendly(Address.parse(contractAddress))}</code>
@@ -196,4 +219,65 @@ export function formatSwapAssignedMessage(loanAssetName: string, collateralAsset
 
 export function formatSwapCanceledMessage(loanAssetName: string, collateralAssetName: string, collateralRewardAmount: bigint, collateralAssetDecimals: bigint) {
     return `Swap cancelled (${getFriendlyAmount(collateralRewardAmount, collateralAssetDecimals, collateralAssetName)} -> ${loanAssetName})`
+}
+
+export function getAssetsInfo(loanAsset: bigint, collateralAsset: bigint, evaa: OpenedContract<Evaa>) {
+    const loanAssetPoolConfig = evaa.poolConfig.poolAssetsConfig.find(it => it.assetId === loanAsset);
+    const collateralAssetPoolConfig = evaa.poolConfig.poolAssetsConfig.find(it => it.assetId === collateralAsset);
+    if (!loanAssetPoolConfig) throw (`Asset ${loanAsset} is not supported`);
+    if (!collateralAssetPoolConfig) throw (`Asset ${collateralAsset} is not supported`);
+
+    const loanAssetExtConfig = evaa.data.assetsConfig.get(loanAsset);
+    const collateralAssetExtConfig = evaa.data.assetsConfig.get(collateralAsset);
+    if (!loanAssetExtConfig) throw (`No data for asset ${loanAsset}`);
+    if (!collateralAssetExtConfig) throw (`No data for asset ${collateralAsset}`);
+
+    const loanAssetName = loanAssetPoolConfig.name;
+    const loanAssetDecimals = loanAssetExtConfig.decimals;
+    const collateralAssetName = collateralAssetPoolConfig.name;
+    const collateralAssetDecimals = collateralAssetExtConfig.decimals;
+    return {
+        loanAssetName, loanAssetDecimals, collateralAssetName, collateralAssetDecimals
+    }
+}
+
+type ParsedSatisfiedTx = {
+    deltaLoanPrincipal: bigint,
+    liquidatableAmount: bigint,
+    protocolGift: bigint,
+    newLoanPrincipal: bigint,
+    collateralAssetId: bigint,
+    deltaCollateralPrincipal: bigint,
+    collateralRewardAmount: bigint,
+    minCollateralAmount: bigint,
+    newCollateralPrincipal: bigint,
+    forwardTonAmount: bigint,
+}
+
+export function parseSatisfiedTxMsg(satisfiedTx: Slice): ParsedSatisfiedTx {
+    const extra = satisfiedTx.loadRef().beginParse();
+    const deltaLoanPrincipal = extra.loadUintBig(64); // delta loan principal
+    const liquidatableAmount = extra.loadUintBig(64); // loan amount
+    const protocolGift = extra.loadUintBig(64); // protocol gift
+    const newLoanPrincipal = extra.loadUintBig(64); // user new loan principal
+    const collateralAssetId = extra.loadUintBig(256); // collateral asset id
+    const deltaCollateralPrincipal = extra.loadUintBig(64); // delta collateral principal amount
+    const collateralRewardAmount = extra.loadUintBig(64); // collateral reward for liquidation
+    const minCollateralAmount = extra.loadUintBig(64);
+    const newCollateralPrincipal = extra.loadUintBig(64);
+    const forwardTonAmount = extra.loadUintBig(64);
+    // const customResponsePayload: Cell = extra.loadMaybeRef();
+
+    return {
+        deltaLoanPrincipal,
+        liquidatableAmount,
+        protocolGift,
+        newLoanPrincipal,
+        collateralAssetId,
+        deltaCollateralPrincipal,
+        collateralRewardAmount,
+        minCollateralAmount,
+        newCollateralPrincipal,
+        forwardTonAmount,
+    }
 }

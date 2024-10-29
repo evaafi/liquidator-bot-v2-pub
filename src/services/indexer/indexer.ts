@@ -7,21 +7,23 @@ import {
     ERROR_CODE,
     formatLiquidationSuccess,
     formatLiquidationUnsatisfied,
-    formatSwapAssignedMessage,
-    formatSwapCanceledMessage,
+    formatSwapAssignedMessage, formatSwapCanceledMessage,
+    getAssetsInfo,
     getErrorDescription,
     makeGetAccountTransactionsRequest,
     OP_CODE,
+    parseSatisfiedTxMsg,
 } from "./helpers";
 import {sleep} from "../../util/process";
-import {Address, Dictionary} from "@ton/core";
-import {Cell, OpenedContract, TonClient} from "@ton/ton";
+import {Address} from "@ton/core";
+import {Cell, Dictionary, OpenedContract, TonClient} from "@ton/ton";
 import {getAddressFriendly, getFriendlyAmount} from "../../util/format";
 import {getBalances} from "../../lib/balances";
-import {Evaa, EvaaUser, TON_MAINNET} from "@evaafi/sdk";
+import {ASSET_ID, Evaa, EvaaUser} from "@evaafi/sdk";
 import {retry} from "../../util/retry";
 import {User} from "../../db/types";
 import {Messenger} from "../../lib/bot";
+import {unpackPrices} from "../../util/prices";
 
 export async function getTransactionsBatch(tonApi: AxiosInstance, bot: Messenger, evaaMaster: Address, before_lt: number): Promise<AxiosResponse<any, any>> {
     let attempts = 0;
@@ -46,26 +48,6 @@ export async function getTransactionsBatch(tonApi: AxiosInstance, bot: Messenger
 }
 
 export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, tonClient: TonClient, bot: Messenger, evaa: OpenedContract<Evaa>, walletAddress: Address, sync = false) {
-    const getAssetsInfo = (loanAsset: bigint, collateralAsset: bigint) => {
-        const loanAssetPoolConfig = evaa.poolConfig.poolAssetsConfig.find(it => it.assetId === loanAsset);
-        const collateralAssetPoolConfig = evaa.poolConfig.poolAssetsConfig.find(it => it.assetId === collateralAsset);
-        if (!loanAssetPoolConfig) throw (`Asset ${loanAsset} is not supported`);
-        if (!collateralAssetPoolConfig) throw (`Asset ${collateralAsset} is not supported`);
-
-        const loanAssetExtConfig = evaa.data.assetsConfig.get(loanAsset);
-        const collateralAssetExtConfig = evaa.data.assetsConfig.get(collateralAsset);
-        if (!loanAssetExtConfig) throw (`No data for asset ${loanAsset}`);
-        if (!collateralAssetExtConfig) throw (`No data for asset ${collateralAsset}`);
-
-        const loanAssetName = loanAssetPoolConfig.name;
-        const loanAssetDecimals = loanAssetExtConfig.decimals;
-        const collateralAssetName = collateralAssetPoolConfig.name;
-        const collateralAssetDecimals = collateralAssetExtConfig.decimals;
-        return {
-            loanAssetName, loanAssetDecimals, collateralAssetName, collateralAssetDecimals
-        }
-    }
-
     const dispatcher = new DelayedCallDispatcher(RPC_CALL_DELAY);
 
     let before_lt = 0;
@@ -83,21 +65,6 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
             await sleep(1000);
             continue;
         }
-        console.log('Evaa syncing...');
-        const syncRes = await retry(
-            async () => await evaa.getSync(),
-            {attempts: 5, attemptInterval: 1000}
-        )
-        if (!syncRes.ok) throw (`Failed to sync evaa`);
-
-        console.log('Getting price data...');
-        const pricesRes = await retry(
-            async () => await evaa.getPrices(),
-            {attempts: 15, attemptInterval: 1000}
-        );
-        if (!pricesRes.ok) throw (`Failed to get price data`);
-
-        const prices: Dictionary<bigint, bigint> = pricesRes?.value?.dict;
 
         for (const tx of transactions) {
             await sleep(TX_PROCESS_DELAY);
@@ -158,32 +125,28 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                     const queryID = bodySlice.loadUintBig(64);
                     const task = await db.getTask(queryID);
                     if (task !== undefined) {
-                        const assetsInfo = getAssetsInfo(task.loan_asset, task.collateral_asset);
-                        const {
-                            loanAssetName, collateralAssetName, collateralAssetDecimals
-                        } = assetsInfo;
-
-                        const satisfiedTx = Cell.fromBoc(Buffer.from(tx['in_msg']['raw_body'], 'hex'))[0].beginParse();
-                        const extra = satisfiedTx.loadRef().beginParse();
-                        extra.loadInt(64); // delta loan principal
-                        const loanAmount = extra.loadUintBig(64);
-                        extra.loadUint(64); // protocol gift
-                        extra.loadUintBig(64); // user new loan principal
-                        extra.loadUintBig(256); // collateral asset id
-                        extra.loadUintBig(64); // delta collateral principal amount
-                        const collateralRewardAmount = extra.loadUintBig(64); // collateral reward for liquidation
                         await db.liquidateSuccess(queryID);
                         console.log(`Liquidation task (Query ID: ${queryID}) successfully completed`);
 
+                        const assetsInfo = getAssetsInfo(task.loan_asset, task.collateral_asset, evaa);
+                        const {loanAssetName, collateralAssetName, collateralAssetDecimals} = assetsInfo;
+
+                        const satisfiedTx = Cell.fromBoc(Buffer.from(tx['in_msg']['raw_body'], 'hex'))[0].beginParse();
+                        const {
+                            liquidatableAmount: loanAmount, protocolGift, collateralRewardAmount
+                        } = parseSatisfiedTxMsg(satisfiedTx);
+
+                        const prices: Dictionary<bigint, bigint> = unpackPrices(Cell.fromBase64(task.prices_cell))
+
                         const assetIds = evaa.poolConfig.poolAssetsConfig
-                            .filter(it => it.assetId !== TON_MAINNET.assetId)
+                            .filter(it => it.assetId !== ASSET_ID.TON)
                             .map(it => it.assetId);
 
-                        const myBalance = await getBalances(tonClient, walletAddress, assetIds, JETTON_WALLETS);
+                        const liquidatorBalances = await getBalances(tonClient, walletAddress, assetIds, JETTON_WALLETS);
                         const localTime = new Date(utime);
                         await bot.sendMessage(
-                            formatLiquidationSuccess(task, assetsInfo, loanAmount, collateralRewardAmount,
-                                hash, localTime, evaa.address, myBalance, evaa.data.assetsConfig
+                            formatLiquidationSuccess(task, assetsInfo, loanAmount, protocolGift, collateralRewardAmount,
+                                hash, localTime, evaa.address, liquidatorBalances, evaa.data.assetsConfig, prices
                             ), {parse_mode: 'HTML'});
 
                         const isEligibleTask = await checkEligibleSwapTask(
@@ -223,7 +186,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                             loanAssetName: transferedAssetName,
                             loanAssetDecimals: transferedAssetDecimals,
                             collateralAssetName, collateralAssetDecimals
-                        } = getAssetsInfo(assetID, collateralAssetID);
+                        } = getAssetsInfo(assetID, collateralAssetID, evaa);
 
                         console.log('\n----- Unsatisfied liquidation task -----\n')
                         console.log(
@@ -285,7 +248,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                         await dispatcher.makeCall(
                             async () => {
                                 console.log('SYNCING USER ', userContractFriendly);
-                                return await openedUserContract.getSync(evaa.data.assetsData, evaa.data.assetsConfig, prices);
+                                return await openedUserContract.getSyncLite(evaa.data.assetsData, evaa.data.assetsConfig);
                             }
                         )
                     }, {attempts: 10, attemptInterval: 2000}
@@ -298,7 +261,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                     return;
                 }
 
-                if (openedUserContract.data.type != 'active') {
+                if (openedUserContract.liteData.type != 'active') {
                     console.warn(`User ${userContractFriendly} is not active!`);
                     return;
                 }
@@ -307,7 +270,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                     codeVersion,
                     ownerAddress: userAddress,
                     principals
-                } = openedUserContract.data;
+                } = openedUserContract.liteData;
 
                 const actualUser: User = {
                     id: 0,

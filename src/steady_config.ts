@@ -1,17 +1,10 @@
 import {sha256Hash} from "./util/crypto";
 
+import {ASSET_ID as _ASSET_ID} from "@evaafi/sdk";
+
 export const ASSET_ID = {
-    TON:            sha256Hash('TON'),
-    USDT:           sha256Hash('USDT'),
-    jUSDT:          sha256Hash('jUSDT'),
-    jUSDC:          sha256Hash('jUSDC'),
-    stTON:          sha256Hash('stTON'),
-    tsTON:          sha256Hash('tsTON'),
-    TONUSDT_DEDUST: sha256Hash('TONUSDT_DEDUST'),
-    TONUSDT_STONFI: sha256Hash('TONUSDT_STONFI'),
-    TON_STORM:      sha256Hash('TON_STORM'),
-    USDT_STORM:     sha256Hash('USDT_STORM'),
-    time:           sha256Hash('time'),
+    ..._ASSET_ID,
+    time: sha256Hash('time'),
 };
 
 export const COLLATERAL_SELECT_PRIORITY = new Map<bigint, number>([
@@ -31,16 +24,12 @@ export const NO_PRIORITY_SELECTED = 999;
 
 // assets banned from being swapped from
 export const BANNED_ASSETS_FROM = [
-    // ASSET_ID.tsTON,
     ASSET_ID.jUSDC
 ];
 // assets banned from being swapped to
 export const BANNED_ASSETS_TO = [
-    // ASSET_ID.tsTON,
     ASSET_ID.jUSDC
 ];
-export const LT_SCALE: bigint = 10_000n;
-export const LB_SCALE: bigint = 10_000n;
 
 //  lower bound of asset worth to swap
 export const PRICE_ACCURACY: bigint = 1_000_000_000n;   // 10^9
@@ -59,6 +48,3 @@ export const LIQUIDATION_BALANCE_LIMITS = new Map<bigint, bigint>([
     [ASSET_ID.TON_STORM,        1_000_000_000n],
     [ASSET_ID.USDT_STORM,       1_000_000_000n],
 ]);
-
-// worth of 100$ - important constant for making decision about liquidation amount
-export const LIQUIDATION_STRATEGIC_LIMIT = 100_000_000_000n;

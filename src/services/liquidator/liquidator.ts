@@ -81,7 +81,7 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
         }
 
         task.liquidation_amount = liquidationAmount;
-        task.min_collateral_amount = quotedCollateralAmount - collateralDust;
+        task.min_collateral_amount = (quotedCollateralAmount - collateralDust) * 97n / 100n;
 
         console.log({
             walletAddress: task.wallet_address,
