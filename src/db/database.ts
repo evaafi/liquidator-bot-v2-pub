@@ -113,13 +113,87 @@ export class MyDatabase {
                 token_offer VARCHAR NOT NULL,
                 token_ask VARCHAR NOT NULL,
                 swap_amount VARCHAR NOT NULL,
-                query_id VARCHAR,
-                route_id VARCHAR,
+                query_id VARCHAR NOT NULL DEFAULT '0',
+                route_id VARCHAR NOT NULL DEFAULT '0',
                 state VARCHAR NOT NULL DEFAULT 'pending',
-                status INTEGER NOT NULL DEFAULT 0
+                status INTEGER NOT NULL DEFAULT 0,
+                prices_cell VARCHAR NOT NULL DEFAULT ''
             )
-        `)
+        `);
+        // no prices ('') means that value check will not be done
 
+        await this.db.run(`
+        CREATE TABLE IF NOT EXISTS swap_tasks(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                token_offer VARCHAR NOT NULL,
+                token_ask VARCHAR NOT NULL,
+                swap_amount VARCHAR NOT NULL,
+                query_id VARCHAR NOT NULL DEFAULT '0',
+                route_id VARCHAR NOT NULL DEFAULT '0',
+                state VARCHAR NOT NULL DEFAULT 'pending',
+                status INTEGER NOT NULL DEFAULT 0,
+                prices_cell VARCHAR NOT NULL DEFAULT ''
+            )`
+        );
+
+        // ============ THIS PART CAN BE REMOVED LATER, IT SHOULD FIX THE swap_tasks TABLE
+
+        // create fixed table
+        await this.db.run(`DROP TABLE IF EXISTS swap_tasks_fixed`);
+        await this.db.run(`
+        CREATE TABLE IF NOT EXISTS swap_tasks_fixed(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                token_offer VARCHAR NOT NULL,
+                token_ask VARCHAR NOT NULL,
+                swap_amount VARCHAR NOT NULL,
+                query_id VARCHAR NOT NULL DEFAULT '0',
+                route_id VARCHAR NOT NULL DEFAULT '0',
+                state VARCHAR NOT NULL DEFAULT 'pending',
+                status INTEGER NOT NULL DEFAULT 0,
+                prices_cell VARCHAR NOT NULL DEFAULT ''
+            )`
+        );
+
+        const hasPricesCell = await this.checkHasPricesCell();
+        if (hasPricesCell) {
+            // copy data with prices_cell
+            await this.db.run(`
+            INSERT INTO swap_tasks_fixed (created_at, updated_at, token_offer, token_ask, swap_amount, query_id, route_id, state, status, prices_cell) 
+            SELECT created_at, updated_at, token_offer, token_ask, swap_amount, query_id, route_id, state, status, prices_cell FROM swap_tasks;
+            `);
+        } else {
+            // copy data without prices_cell
+            await this.db.run(`
+            INSERT INTO swap_tasks_fixed (created_at, updated_at, token_offer, token_ask, swap_amount, query_id, route_id, state, status) 
+            SELECT created_at, updated_at, token_offer, token_ask, swap_amount, query_id, route_id, state, status FROM swap_tasks;
+            `);
+        }
+
+        // fix query_id and route_id
+        await this.db.run(`UPDATE swap_tasks_fixed SET query_id = 0 WHERE query_id is NULL or query_id = ''`);
+        await this.db.run(`UPDATE swap_tasks_fixed SET route_id = 0 WHERE route_id is NULL or route_id = ''`);
+
+        // rename table
+        await this.db.run(`DROP TABLE IF EXISTS swap_tasks`);
+        await this.db.run(`ALTER TABLE swap_tasks_fixed RENAME TO swap_tasks`);
+
+        // ============= END OF THE FIX PART =============
+    }
+
+    /**
+     * Works only for sqlite, for postgresql need to implement another check,
+     * or maybe just remove if not necessary anymore
+     * @returns true if table swap_tasks has the prices_cell column, false otherwise
+     */
+    async checkHasPricesCell() {
+        const results = await this.db.all(
+            `SELECT 1 FROM pragma_table_info('swap_tasks') WHERE name = 'prices_cell'`
+        );
+        return results.length > 0;
     }
 
     async addTransaction(hash: string, utime: number) {
@@ -167,7 +241,6 @@ export class MyDatabase {
     }
 
     async updateUserTime(contract_address: string, created_at: number, updated_at: number) {
-        console.log(`Update user time for contract ${contract_address}`);
         await retry(async () => {
             await this.db.run(`
             UPDATE users 
@@ -403,10 +476,10 @@ export class MyDatabase {
         `, Date.now(), queryID.toString())
     }
 
-    async addSwapTask(createdAt: number, tokenOffer: bigint, tokenAsk: bigint, swapAmount: bigint) {
-        await this.db.run(`
-            INSERT INTO swap_tasks(created_at, updated_at, token_offer, token_ask, swap_amount) 
-            VALUES(?, ?, ?, ?, ?)
-        `, createdAt, createdAt, tokenOffer.toString(), tokenAsk.toString(), swapAmount.toString())
+    async addSwapTask(createdAt: number, tokenOffer: bigint, tokenAsk: bigint, swapAmount: bigint, pricesCell: string) {
+        await this.db.run(`INSERT INTO swap_tasks 
+            (created_at, updated_at, token_offer, token_ask, swap_amount, prices_cell) 
+            VALUES(?, ?, ?, ?, ?, ?)`,
+            createdAt, createdAt, tokenOffer.toString(), tokenAsk.toString(), swapAmount.toString(), pricesCell)
     }
 }

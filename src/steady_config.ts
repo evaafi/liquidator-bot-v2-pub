@@ -22,15 +22,6 @@ export const COLLATERAL_SELECT_PRIORITY = new Map<bigint, number>([
 );
 export const NO_PRIORITY_SELECTED = 999;
 
-// assets banned from being swapped from
-export const BANNED_ASSETS_FROM = [
-    ASSET_ID.jUSDC
-];
-// assets banned from being swapped to
-export const BANNED_ASSETS_TO = [
-    ASSET_ID.jUSDC
-];
-
 //  lower bound of asset worth to swap
 export const PRICE_ACCURACY: bigint = 1_000_000_000n;   // 10^9
 export const MIN_WORTH_SWAP_LIMIT: bigint = 100n * PRICE_ACCURACY; // usd
@@ -48,3 +39,14 @@ export const LIQUIDATION_BALANCE_LIMITS = new Map<bigint, bigint>([
     [ASSET_ID.TON_STORM,        1_000_000_000n],
     [ASSET_ID.USDT_STORM,       1_000_000_000n],
 ]);
+
+// assets banned from being swapped from
+export const BANNED_ASSETS_FROM = [
+    ASSET_ID.jUSDC
+];
+// assets banned from being swapped to
+export const BANNED_ASSETS_TO = [
+    ASSET_ID.jUSDC
+];
+
+export const SKIP_SWAP_VALUE_CHECK = false;

@@ -18,7 +18,7 @@ import {HighloadWalletV2, makeLiquidationCell} from "../../lib/highload_contract
 import {retry} from "../../util/retry";
 import {getBalances, WalletBalances} from "../../lib/balances";
 import {getAddressFriendly} from "../../util/format";
-import {Messenger} from "../../lib/bot";
+import {logMessage, Messenger} from "../../lib/messenger";
 import {calculateDust, formatNotEnoughBalanceMessage, Log} from "./helpers";
 
 const MAX_TASKS_FETCH = 100;
@@ -46,11 +46,8 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
     for (const task of tasks) {
         let liquidatorLoanBalance = liquidatorBalances.get(task.loan_asset) ?? 0n;
         if (liquidatorLoanBalance < LIQUIDATION_BALANCE_LIMITS.get(task.loan_asset)) {
-            console.log(`Not enough balance for liquidation task ${task.id}`);
-            await bot.sendMessage(
-                formatNotEnoughBalanceMessage(task, liquidatorBalances, evaa.data.assetsConfig),
-                {parse_mode: 'HTML'}
-            );
+            logMessage(`Liquidator: Not enough balance for liquidation task ${task.id}`);
+            await bot.sendMessage(formatNotEnoughBalanceMessage(task, liquidatorBalances, evaa.data.assetsConfig, evaa.poolConfig.poolAssetsConfig));
             await db.cancelTaskNoBalance(task.id);
             continue;
         }
@@ -81,7 +78,7 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
         }
 
         task.liquidation_amount = liquidationAmount;
-        task.min_collateral_amount = (quotedCollateralAmount - collateralDust) * 97n / 100n;
+        task.min_collateral_amount = quotedCollateralAmount * 99n/10n - collateralDust;
 
         console.log({
             walletAddress: task.wallet_address,
@@ -118,7 +115,7 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
         } else {
             const loanAsset = findAssetById(task.loan_asset, evaa.poolConfig);
             if (!loanAsset) {
-                console.error(`Asset ${task.loan_asset} is not supported, skipping...`);
+                logMessage(`Liquidator: Asset ${task.loan_asset} is not supported, skipping...`);
                 await bot.sendMessage(`Asset ${task.loan_asset} is not supported, skipping...`);
                 continue;
             }
@@ -155,15 +152,15 @@ export async function handleLiquidates(db: MyDatabase, tonClient: TonClient,
     const res = await retry(
         async () => {
             const queryID = await highloadContract.sendMessages(highloadMessages, keys.secretKey);
-            console.log(`Highload message sent, queryID=${queryID}`);
+            logMessage(`Liquidator: Highload message sent, queryID: ${queryID}`);
         }, {attempts: 20, attemptInterval: 200}
     ); // TODO: maybe add tx send watcher
-    if (!res) throw (`Failed to send highload message`);
+    if (!res) throw (`Liquidator: Failed to send highload message`);
 
     const logStrings: string[] = [`\nLiquidation tasks sent for ${log.length} users:`];
     for (const task of log) {
         logStrings.push(`ID: ${task.id}, Wallet: ${task.walletAddress}`);
         await db.liquidateSent(task.id);
     }
-    console.log(logStrings.join('\n'));
+    logMessage(`Liquidator: ${logStrings.join('\n')}`);
 }
