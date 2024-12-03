@@ -56,7 +56,7 @@ async function main(bot: Messenger) {
     let handlingTransactions = false;
     const transactionID = setInterval(async () => {
         if (handlingTransactions) {
-            logMessage('TRANSACTION HANDLER: handling transactions in progress, wait more...');
+            logMessage('Transaction Handler: handling transactions in progress, wait more...');
             return;
         }
         logMessage('Starting handleTransactions...')

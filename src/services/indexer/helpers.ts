@@ -6,6 +6,7 @@ import {sleep} from "../../util/process";
 import {formatBalances, getAddressFriendly, getFriendlyAmount} from "../../util/format";
 import {Task} from "../../db/types";
 import {WalletBalances} from "../../lib/balances";
+import {logMessage} from "../../lib/messenger";
 
 export function makeGetAccountTransactionsRequest(address: Address, before_lt: number) {
     if (before_lt === 0)
@@ -136,8 +137,9 @@ export class DelayedCallDispatcher {
         const waitTimeLeft = this.delay - timeElapsed;
         const toSleep = waitTimeLeft > 0 ? waitTimeLeft : 0;
         this.lastCallTimestamp = toSleep + Date.now();
-
-        console.log(`DelayedCallDispatcher: will sleep ${toSleep}ms more`);
+        if (toSleep > 0) {
+            logMessage(`DelayedCallDispatcher: will sleep ${toSleep}ms more`);
+        }
         await sleep(toSleep);
 
         return await func();

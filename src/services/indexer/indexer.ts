@@ -217,7 +217,7 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                 const userContractFriendly = getAddressFriendly(userContractAddress);
                 const user = await db.getUser(userContractFriendly);
                 if (user && user.updated_at > utime) {
-                    console.log(`Indexer: Update user time for contract ${userContractFriendly}`);
+                    logMessage(`Indexer: Update user time for contract ${userContractFriendly}`);
                     await db.updateUserTime(userContractFriendly, utime, utime);
                     // console.log(`Contract ${getAddressFriendly(userContractAddress)} updated (time)`);
                     return;

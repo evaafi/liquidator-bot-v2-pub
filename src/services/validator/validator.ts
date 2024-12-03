@@ -7,7 +7,6 @@ import {
     Evaa,
     findAssetById,
     PoolConfig,
-    selectGreatestAssets,
     TON_MAINNET
 } from "@evaafi/sdk";
 import {logMessage, Messenger} from "../../lib/messenger";
