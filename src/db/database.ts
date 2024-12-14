@@ -137,51 +137,6 @@ export class MyDatabase {
                 prices_cell VARCHAR NOT NULL DEFAULT ''
             )`
         );
-
-        // ============ THIS PART CAN BE REMOVED LATER, IT SHOULD FIX THE swap_tasks TABLE
-
-        // create fixed table
-        await this.db.run(`DROP TABLE IF EXISTS swap_tasks_fixed`);
-        await this.db.run(`
-        CREATE TABLE IF NOT EXISTS swap_tasks_fixed(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL,
-                token_offer VARCHAR NOT NULL,
-                token_ask VARCHAR NOT NULL,
-                swap_amount VARCHAR NOT NULL,
-                query_id VARCHAR NOT NULL DEFAULT '0',
-                route_id VARCHAR NOT NULL DEFAULT '0',
-                state VARCHAR NOT NULL DEFAULT 'pending',
-                status INTEGER NOT NULL DEFAULT 0,
-                prices_cell VARCHAR NOT NULL DEFAULT ''
-            )`
-        );
-
-        const hasPricesCell = await this.checkHasPricesCell();
-        if (hasPricesCell) {
-            // copy data with prices_cell
-            await this.db.run(`
-            INSERT INTO swap_tasks_fixed (created_at, updated_at, token_offer, token_ask, swap_amount, query_id, route_id, state, status, prices_cell) 
-            SELECT created_at, updated_at, token_offer, token_ask, swap_amount, query_id, route_id, state, status, prices_cell FROM swap_tasks;
-            `);
-        } else {
-            // copy data without prices_cell
-            await this.db.run(`
-            INSERT INTO swap_tasks_fixed (created_at, updated_at, token_offer, token_ask, swap_amount, query_id, route_id, state, status) 
-            SELECT created_at, updated_at, token_offer, token_ask, swap_amount, query_id, route_id, state, status FROM swap_tasks;
-            `);
-        }
-
-        // fix query_id and route_id
-        await this.db.run(`UPDATE swap_tasks_fixed SET query_id = 0 WHERE query_id is NULL or query_id = ''`);
-        await this.db.run(`UPDATE swap_tasks_fixed SET route_id = 0 WHERE route_id is NULL or route_id = ''`);
-
-        // rename table
-        await this.db.run(`DROP TABLE IF EXISTS swap_tasks`);
-        await this.db.run(`ALTER TABLE swap_tasks_fixed RENAME TO swap_tasks`);
-
-        // ============= END OF THE FIX PART =============
     }
 
     /**
