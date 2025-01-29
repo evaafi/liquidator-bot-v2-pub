@@ -18,6 +18,9 @@ export const COLLATERAL_SELECT_PRIORITY = new Map<bigint, number>([
         [ASSET_ID.TONUSDT_STONFI,   8],
         [ASSET_ID.TON_STORM,        9],
         [ASSET_ID.USDT_STORM,       10],
+        [ASSET_ID.NOT,              11],
+        [ASSET_ID.DOGS,             12],
+        [ASSET_ID.CATI,             13],
     ]
 );
 export const NO_PRIORITY_SELECTED = 999;
@@ -38,6 +41,9 @@ export const LIQUIDATION_BALANCE_LIMITS = new Map<bigint, bigint>([
     [ASSET_ID.TONUSDT_STONFI,   1_000_000_000n],
     [ASSET_ID.TON_STORM,        1_000_000_000n],
     [ASSET_ID.USDT_STORM,       1_000_000_000n],
+    [ASSET_ID.NOT,              1_000_000_000n],
+    [ASSET_ID.DOGS,             1_000_000_000n],
+    [ASSET_ID.CATI,             1_000_000_000n],
 ]);
 
 // assets banned from being swapped from
