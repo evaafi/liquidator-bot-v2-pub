@@ -133,7 +133,19 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                         const collateralAsset = getAssetInfo(task.collateral_asset, evaa);
 
                         const satisfiedTx = Cell.fromBoc(Buffer.from(tx['in_msg']['raw_body'], 'hex'))[0].beginParse();
-                        const parsedTx = parseSatisfiedTxMsg(satisfiedTx);
+                        let parsedTx;
+                        try {
+                          parsedTx = parseSatisfiedTxMsg(satisfiedTx);
+                        } catch (parseErr) {
+                            const errorMessage = parseErr instanceof Error ? parseErr.message : String(parseErr);
+                            logMessage(
+                                `Indexer: Tx ${hash}: parseSatisfiedTxMsg failed, ignoring. Error: ${errorMessage}`
+                            );
+                            messenger.sendMessage(
+                                `🚨🚨🚨 Tx ${hash}: parseSatisfiedTxMsg failed, ignoring. Error: ${errorMessage} 🚨🚨🚨`
+                            );
+                            continue;
+                        }
                         const prices: Dictionary<bigint, bigint> = unpackPrices(Cell.fromBase64(task.prices_cell))
 
                         const assetIds = evaa.poolConfig.poolAssetsConfig
@@ -168,7 +180,26 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                     }
                 } else if (op === OP_CODE.MASTER_LIQUIDATE_UNSATISFIED) {
                     const unsatisfiedTx = Cell.fromBoc(Buffer.from(tx['in_msg']['raw_body'], 'hex'))[0].beginParse();
-                    const parsedTx = parseUnsatisfiedTxMsg(unsatisfiedTx);
+                    let parsedTx;
+                    try {
+                        parsedTx =
+                        parseUnsatisfiedTxMsg(
+                            unsatisfiedTx
+                        );
+                    } catch (parseErr) {
+                        const errorMessage =
+                            parseErr instanceof Error
+                                ? parseErr.message
+                                : String(parseErr);
+                        logMessage(
+                          `Indexer: Tx ${hash}: parseUnsatisfiedTxMsg failed, ignoring. Error: ${errorMessage}`
+                        );
+                        await messenger.sendMessage(
+                            `🚨🚨🚨 Tx ${hash}: parseUnsatisfiedTxMsg failed, ignoring. Error: ${errorMessage} 🚨🚨🚨`
+                        );
+                        continue;
+                    }
+                    
                     const task = await db.getTask(parsedTx.queryID);
                     if (task !== undefined) {
                         await db.unsatisfyTask(parsedTx.queryID);
@@ -266,11 +297,13 @@ export async function handleTransactions(db: MyDatabase, tonApi: AxiosInstance, 
                     principals: principals,
                     state: 'active',
                 }
+
                 const userRes = await retry(
                     async () => await db.insertOrUpdateUser(actualUser),
                     DATABASE_DEFAULT_RETRY_OPTIONS
                 );
-                if (!userRes) {
+
+                if (!userRes.ok) {
                     const message = `Indexer: Failed to actualize user ${userContractFriendly}`;
                     logMessage(message);
                     await messenger.sendMessage(message);

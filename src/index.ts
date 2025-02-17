@@ -17,13 +17,13 @@ import {HighloadWalletV2} from "./lib/highload_contract_v2";
 
 function makeTonApi(endpoint, apiKey: string) {
     const tonApi = axios.create({
-        baseURL: endpoint,
-        httpsAgent: new https.Agent({
-            rejectUnauthorized: false,
-        }),
-        headers: {
-            'Authorization': apiKey
-        }
+      baseURL: endpoint,
+      httpsAgent: new https.Agent({
+        rejectUnauthorized: false,
+      }),
+      headers: {
+        Authorization: apiKey, // The apiKey will be started with "Bearer " in .env, e.g. "Bearer 1234567890"
+      },
     });
     return tonApi;
 }
@@ -37,6 +37,7 @@ async function main(bot: Messenger) {
     const tonApi: AxiosInstance = makeTonApi(TON_API_ENDPOINT, process.env.TONAPI_KEY);
     const tonClient: TonClient = await makeTonClient();
     const evaa: OpenedContract<Evaa> = tonClient.open(new Evaa({debug: IS_TESTNET, poolConfig}));
+    const evaaPriceCollector = evaa.createPriceCollector();
     const res = await retry(
         async () => await evaa.getSync(),
         {attempts: 10, attemptInterval: 5000}
@@ -84,7 +85,7 @@ async function main(bot: Messenger) {
         }
         validating = true;
 
-        validateBalances(db, evaa, bot, POOL_CONFIG)
+        validateBalances(db, evaa, evaaPriceCollector, bot, POOL_CONFIG)
             .catch(e => {
                 console.log(e);
                 if (JSON.stringify(e).length == 2) {
@@ -124,16 +125,12 @@ async function main(bot: Messenger) {
     let blacklisting = false;
     const blacklisterID = setInterval(async () => {
         if (blacklisting) {
-            logMessage('BLACKLSTER: Blacklisting is in progress, wait more...');
+            logMessage('BLACKLISTER: Blacklisting is in progress, wait more...');
             return;
         }
         blacklisting = true;
         try {
-            const blacklistedUsers = await db.handleFailedTasks();
-            for (const user of blacklistedUsers) {
-                await bot.sendMessage(`❌ User ${user} blacklisted`);
-                await sleep(100);
-            }
+            await db.handleFailedTasks();
             await db.deleteOldTasks();
         } catch (e) {
             console.log(e);

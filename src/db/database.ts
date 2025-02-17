@@ -139,18 +139,6 @@ export class MyDatabase {
         );
     }
 
-    /**
-     * Works only for sqlite, for postgresql need to implement another check,
-     * or maybe just remove if not necessary anymore
-     * @returns true if table swap_tasks has the prices_cell column, false otherwise
-     */
-    async checkHasPricesCell() {
-        const results = await this.db.all(
-            `SELECT 1 FROM pragma_table_info('swap_tasks') WHERE name = 'prices_cell'`
-        );
-        return results.length > 0;
-    }
-
     async addTransaction(hash: string, utime: number) {
         await retry(async () => {
             await this.db.run(
@@ -231,8 +219,7 @@ export class MyDatabase {
             principalUpdateParameters,
         ].flat();
 
-        const res = await this.db.run(this.INSERT_OR_UPDATE_USER, ...parameters);
-        if (!res) throw (`Failed to add_or_insert user ${user.contract_address}`);
+        await this.db.run(this.INSERT_OR_UPDATE_USER, ...parameters);
     }
 
     async getUsers() {
@@ -361,26 +348,38 @@ export class MyDatabase {
     }
 
     async handleFailedTasks() {
-        await this.db.run(`
+        const oldSentTasksRes = await retry(
+            async () => await this.db.all(`
             UPDATE liquidation_tasks 
             SET state = 'failed', updated_at = ?
             WHERE state in ('sent') AND ? - updated_at > ?
-        `, Date.now(), Date.now(), TTL.sent)
+        `, Date.now(), Date.now(), TTL.sent),
+            DATABASE_DEFAULT_RETRY_OPTIONS
+        );
+        if (!oldSentTasksRes.ok) {
+            // not critical, just continue working
+            console.log('FAILED TO HANDLE OLD SENT TASKS');
+        }
 
-        await this.db.run(`
+        const oldProcessingTasksRes = await retry(
+            async () => await this.db.run(`
             UPDATE liquidation_tasks 
             SET state = 'failed', updated_at = ?
             WHERE state in ('processing') AND ? - updated_at > ?
-        `, Date.now(), Date.now(), TTL.processing)
-
-        return [];
+        `, Date.now(), Date.now(), TTL.processing),
+            DATABASE_DEFAULT_RETRY_OPTIONS
+        );
+        if (!oldProcessingTasksRes.ok) {
+            // not critical, just continue working
+            console.log('FAILED TO HANDLE OLD SENT TASKS');
+        }
     }
 
-    async blacklistUser(walletAddress: string) {
+    async blacklistUser(walletAddress: string) : Promise<boolean> {
         const res = await retry(async () => await this.db.all(`
             UPDATE users SET state = 'blacklist' WHERE users.wallet_address = ?   
         `, walletAddress), DATABASE_DEFAULT_RETRY_OPTIONS);
-        if (!res.ok) throw (`Failed to blacklist user ${walletAddress}`);
+        return res.ok;
     }
 
     async isTaskExists(walletAddress: string) {
@@ -406,6 +405,14 @@ export class MyDatabase {
             SET state = 'cancelled', updated_at = ?
             WHERE state = 'pending' AND ? - created_at > ?
         `, Date.now(), Date.now(), TTL.pending) // 30sec -> old
+    }
+
+    async cancelTask(taskId: number) {
+        await this.db.run(`
+            UPDATE liquidation_tasks
+            SET state = 'cancelled', updated_at = ?,
+            WHERE id = ? 
+        `, Date.now(), taskId)
     }
 
     async cancelTaskNoBalance(id: number) {

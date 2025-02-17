@@ -23,7 +23,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "@evaafi/sdk": "^0.6.2-c",
+    "@evaafi/sdk": "^0.6.2-b",
     "@iota/sdk": "^1.1.0",
     "@orbs-network/ton-access": "^2.3.3",
     "@ton/core": "0.56.0",
@@ -35,7 +35,7 @@
     "decimal.js": "10.4.3",
     "dotenv": "^16.4.5",
     "ethereumjs-util": "7.0.10",
-    "ethers": "^6.13.5",
+    "ethers": "5.6.9",
     "evaa-liquidator": "./",
     "sort-deep-object-arrays": "^1.1.2",
     "sqlite": "^5.0.1",

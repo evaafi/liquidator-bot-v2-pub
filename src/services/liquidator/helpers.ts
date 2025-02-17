@@ -1,7 +1,16 @@
 import {WalletBalances} from "../../lib/balances";
 import {formatBalances, getFriendlyAmount} from "../../util/format";
-import {ExtendedAssetsConfig, ExtendedAssetsData, MasterConstants, PoolAssetsConfig, presentValue} from "@evaafi/sdk";
+import {
+    Evaa,
+    ExtendedAssetsConfig,
+    ExtendedAssetsData,
+    MasterConstants,
+    PoolAssetsConfig,
+    presentValue,
+    TON_MAINNET
+} from "@evaafi/sdk";
 import {POOL_CONFIG} from "../../config";
+import {OpenedContract} from "@ton/ton";
 
 type TaskMinimal = {
     id: number,
@@ -50,4 +59,10 @@ export function calculateDust(
 
     const dustPresent = presentValue(data.sRate, data.bRate, config.dust, masterConstants);
     return dustPresent.amount;
+}
+
+export function getJettonIDs(evaa: OpenedContract<Evaa>): bigint[] {
+    return evaa.poolConfig.poolAssetsConfig
+        .filter(asset => asset.assetId !== TON_MAINNET.assetId)
+        .map(asset => asset.assetId);
 }

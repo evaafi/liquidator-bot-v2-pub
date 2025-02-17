@@ -129,5 +129,6 @@ export async function addLiquidationTask(
                 queryID);
         }, {attempts: 5, attemptInterval: 1000}
     );
-    if (!res.ok) throw (`Failed to add db task for user ${user.wallet_address}`);
+
+    return res.ok;
 }

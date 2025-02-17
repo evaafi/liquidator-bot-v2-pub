@@ -7,6 +7,9 @@ export const ASSET_ID = {
     time: sha256Hash('time'),
 };
 
+/**
+ * Priority order of collaterals to select for calculating liquidation parameters
+ */
 export const COLLATERAL_SELECT_PRIORITY = new Map<bigint, number>([
         [ASSET_ID.USDT,             1],
         [ASSET_ID.TON,              2],
@@ -25,11 +28,15 @@ export const COLLATERAL_SELECT_PRIORITY = new Map<bigint, number>([
 );
 export const NO_PRIORITY_SELECTED = 999;
 
-//  lower bound of asset worth to swap
+/**
+ * lower bound of asset worth to swap
+ */
 export const PRICE_ACCURACY: bigint = 1_000_000_000n;   // 10^9
 export const MIN_WORTH_SWAP_LIMIT: bigint = 100n * PRICE_ACCURACY; // usd
 
-// should cancel liquidation if amount is less than that number
+/**
+ * should cancel liquidation if amount is less than that number
+ */
 export const LIQUIDATION_BALANCE_LIMITS = new Map<bigint, bigint>([
     [ASSET_ID.TON,              5_000_000_000n],
     [ASSET_ID.jUSDT,            1_000_000n],
@@ -46,13 +53,37 @@ export const LIQUIDATION_BALANCE_LIMITS = new Map<bigint, bigint>([
     [ASSET_ID.CATI,             1_000_000_000n],
 ]);
 
-// assets banned from being swapped from
+/**
+ * assets banned from being swapped from
+ */
 export const BANNED_ASSETS_FROM = [
     ASSET_ID.jUSDC
 ];
-// assets banned from being swapped to
+
+/**
+ * assets banned from being swapped to
+ */
 export const BANNED_ASSETS_TO = [
     ASSET_ID.jUSDC
 ];
 
+/**
+ * should we skip value check when assigning a swap task?
+ */
 export const SKIP_SWAP_VALUE_CHECK = false;
+
+/**
+ * liquidator prices update interval in seconds
+ */
+export const LIQUIDATOR_PRICES_UPDATE_INTERVAL = 15;
+
+/**
+ * validator price actuality time since issued,validator receives price data from sdk,
+ * if this value is exceeded, there might be something wrong with sdk
+ */
+export const VALIDATOR_MAX_PRICES_ISSUED = 136;
+
+/**
+ * liquidator price actuality time since issued
+ */
+export const LIQUIDATOR_MAX_PRICES_ISSUED = 150;

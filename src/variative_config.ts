@@ -2,7 +2,7 @@ import {Address} from "@ton/core";
 import {ASSET_ID} from "./steady_config";
 import {TonClient} from "@ton/ton";
 import {configDotenv} from "dotenv";
-import {MAINNET_LP_POOL_CONFIG, MAINNET_POOL_CONFIG} from "@evaafi/sdk";
+import {MAINNET_POOL_CONFIG} from "@evaafi/sdk";
 
 export const HIGHLOAD_ADDRESS = Address.parse('EQDo27P-CAam_G2xmQd4CxnFYjY2FKPmmKEc8wTCh4c33Mhi');
 // jetton wallets of specified highloadAddress
@@ -25,9 +25,12 @@ export const JETTON_WALLETS = new Map<bigint, Address>([
 ]);
 
 export const IS_TESTNET = false;
-const dbPathMainnet = './database-mainnet.db';
-const dbPathTestnet = './database-testnet.db';
-export const DB_PATH = IS_TESTNET ? dbPathTestnet : dbPathMainnet
+
+const DB_PATH_MAINNET = './database-mainnet.db';
+const DB_PATH_TESTNET = './database-testnet.db';
+
+export const DB_PATH = IS_TESTNET ? DB_PATH_TESTNET : DB_PATH_MAINNET
+
 /* Actual configuration */
 export const RPC_ENDPOINT = 'https://rpc.evaa.finance/api/v2/jsonRPC';
 export const TON_API_ENDPOINT = 'https://tonapi.io/';
