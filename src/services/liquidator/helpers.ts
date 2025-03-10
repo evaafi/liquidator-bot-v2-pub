@@ -1,7 +1,16 @@
 import {WalletBalances} from "../../lib/balances";
 import {formatBalances, getFriendlyAmount} from "../../util/format";
-import {ExtendedAssetsConfig, ExtendedAssetsData, MasterConstants, presentValue} from "@evaafi/sdk";
+import {
+    Evaa,
+    ExtendedAssetsConfig,
+    ExtendedAssetsData,
+    MasterConstants,
+    PoolAssetsConfig,
+    presentValue,
+    TON_MAINNET
+} from "@evaafi/sdk";
 import {POOL_CONFIG} from "../../config";
+import {OpenedContract} from "@ton/ton";
 
 type TaskMinimal = {
     id: number,
@@ -9,12 +18,12 @@ type TaskMinimal = {
     liquidation_amount: bigint,
 }
 
-export function formatNotEnoughBalanceMessage<Task extends TaskMinimal>(task: Task, balance: WalletBalances, extAssetsConfig: ExtendedAssetsConfig) {
+export function formatNotEnoughBalanceMessage<Task extends TaskMinimal>(task: Task, balance: WalletBalances, extAssetsConfig: ExtendedAssetsConfig, poolAssetsConfig: PoolAssetsConfig) {
     const assets = POOL_CONFIG.poolAssetsConfig;
     const loan_asset = assets.find(asset => (asset.assetId === task.loan_asset));
     if (!loan_asset) throw (`${task.loan_asset} is not supported`);
 
-    const formattedBalances = formatBalances(balance, extAssetsConfig);
+    const formattedBalances = formatBalances(balance, extAssetsConfig, poolAssetsConfig);
     const loan_config = extAssetsConfig.get(task.loan_asset);
     if (!loan_config) throw (`No config for asset ${task.loan_asset}`);
 
@@ -50,4 +59,10 @@ export function calculateDust(
 
     const dustPresent = presentValue(data.sRate, data.bRate, config.dust, masterConstants);
     return dustPresent.amount;
+}
+
+export function getJettonIDs(evaa: OpenedContract<Evaa>): bigint[] {
+    return evaa.poolConfig.poolAssetsConfig
+        .filter(asset => asset.assetId !== TON_MAINNET.assetId)
+        .map(asset => asset.assetId);
 }

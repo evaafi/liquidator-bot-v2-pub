@@ -113,13 +113,30 @@ export class MyDatabase {
                 token_offer VARCHAR NOT NULL,
                 token_ask VARCHAR NOT NULL,
                 swap_amount VARCHAR NOT NULL,
-                query_id VARCHAR,
-                route_id VARCHAR,
+                query_id VARCHAR NOT NULL DEFAULT '0',
+                route_id VARCHAR NOT NULL DEFAULT '0',
                 state VARCHAR NOT NULL DEFAULT 'pending',
-                status INTEGER NOT NULL DEFAULT 0
+                status INTEGER NOT NULL DEFAULT 0,
+                prices_cell VARCHAR NOT NULL DEFAULT ''
             )
-        `)
+        `);
+        // no prices ('') means that value check will not be done
 
+        await this.db.run(`
+        CREATE TABLE IF NOT EXISTS swap_tasks(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                token_offer VARCHAR NOT NULL,
+                token_ask VARCHAR NOT NULL,
+                swap_amount VARCHAR NOT NULL,
+                query_id VARCHAR NOT NULL DEFAULT '0',
+                route_id VARCHAR NOT NULL DEFAULT '0',
+                state VARCHAR NOT NULL DEFAULT 'pending',
+                status INTEGER NOT NULL DEFAULT 0,
+                prices_cell VARCHAR NOT NULL DEFAULT ''
+            )`
+        );
     }
 
     async addTransaction(hash: string, utime: number) {
@@ -167,7 +184,6 @@ export class MyDatabase {
     }
 
     async updateUserTime(contract_address: string, created_at: number, updated_at: number) {
-        console.log(`Update user time for contract ${contract_address}`);
         await retry(async () => {
             await this.db.run(`
             UPDATE users 
@@ -203,8 +219,7 @@ export class MyDatabase {
             principalUpdateParameters,
         ].flat();
 
-        const res = await this.db.run(this.INSERT_OR_UPDATE_USER, ...parameters);
-        if (!res) throw (`Failed to add_or_insert user ${user.contract_address}`);
+        await this.db.run(this.INSERT_OR_UPDATE_USER, ...parameters);
     }
 
     async getUsers() {
@@ -333,26 +348,38 @@ export class MyDatabase {
     }
 
     async handleFailedTasks() {
-        await this.db.run(`
+        const oldSentTasksRes = await retry(
+            async () => await this.db.all(`
             UPDATE liquidation_tasks 
             SET state = 'failed', updated_at = ?
             WHERE state in ('sent') AND ? - updated_at > ?
-        `, Date.now(), Date.now(), TTL.sent)
+        `, Date.now(), Date.now(), TTL.sent),
+            DATABASE_DEFAULT_RETRY_OPTIONS
+        );
+        if (!oldSentTasksRes.ok) {
+            // not critical, just continue working
+            console.log('FAILED TO HANDLE OLD SENT TASKS');
+        }
 
-        await this.db.run(`
+        const oldProcessingTasksRes = await retry(
+            async () => await this.db.run(`
             UPDATE liquidation_tasks 
             SET state = 'failed', updated_at = ?
             WHERE state in ('processing') AND ? - updated_at > ?
-        `, Date.now(), Date.now(), TTL.processing)
-
-        return [];
+        `, Date.now(), Date.now(), TTL.processing),
+            DATABASE_DEFAULT_RETRY_OPTIONS
+        );
+        if (!oldProcessingTasksRes.ok) {
+            // not critical, just continue working
+            console.log('FAILED TO HANDLE OLD SENT TASKS');
+        }
     }
 
-    async blacklistUser(walletAddress: string) {
+    async blacklistUser(walletAddress: string) : Promise<boolean> {
         const res = await retry(async () => await this.db.all(`
             UPDATE users SET state = 'blacklist' WHERE users.wallet_address = ?   
         `, walletAddress), DATABASE_DEFAULT_RETRY_OPTIONS);
-        if (!res.ok) throw (`Failed to blacklist user ${walletAddress}`);
+        return res.ok;
     }
 
     async isTaskExists(walletAddress: string) {
@@ -380,6 +407,14 @@ export class MyDatabase {
         `, Date.now(), Date.now(), TTL.pending) // 30sec -> old
     }
 
+    async cancelTask(taskId: number) {
+        await this.db.run(`
+            UPDATE liquidation_tasks
+            SET state = 'cancelled', updated_at = ?,
+            WHERE id = ? 
+        `, Date.now(), taskId)
+    }
+
     async cancelTaskNoBalance(id: number) {
         await this.db.run(`
             UPDATE liquidation_tasks 
@@ -403,10 +438,10 @@ export class MyDatabase {
         `, Date.now(), queryID.toString())
     }
 
-    async addSwapTask(createdAt: number, tokenOffer: bigint, tokenAsk: bigint, swapAmount: bigint) {
-        await this.db.run(`
-            INSERT INTO swap_tasks(created_at, updated_at, token_offer, token_ask, swap_amount) 
-            VALUES(?, ?, ?, ?, ?)
-        `, createdAt, createdAt, tokenOffer.toString(), tokenAsk.toString(), swapAmount.toString())
+    async addSwapTask(createdAt: number, tokenOffer: bigint, tokenAsk: bigint, swapAmount: bigint, pricesCell: string) {
+        await this.db.run(`INSERT INTO swap_tasks 
+            (created_at, updated_at, token_offer, token_ask, swap_amount, prices_cell) 
+            VALUES(?, ?, ?, ?, ?, ?)`,
+            createdAt, createdAt, tokenOffer.toString(), tokenAsk.toString(), swapAmount.toString(), pricesCell)
     }
 }
