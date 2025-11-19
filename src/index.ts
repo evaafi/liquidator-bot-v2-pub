@@ -1,6 +1,6 @@
 import {MyDatabase} from "./db/database";
 import {OpenedContract, TonClient} from "@ton/ton";
-import {DB_PATH, HIGHLOAD_ADDRESS, IS_TESTNET, makeTonClient, POOL_CONFIG, TON_API_ENDPOINT} from "./config";
+import {DB_PATH, EVAA_CONTRACT_VERSIONS_MAP, HIGHLOAD_ADDRESS, IS_TESTNET, makeTonClient, POOL_CONFIG, TON_API_ENDPOINT} from "./config";
 import axios, {AxiosInstance} from "axios";
 import {handleTransactions} from "./services/indexer/indexer";
 import {validateBalances} from "./services/validator/validator";
@@ -36,7 +36,7 @@ async function main(bot: Messenger) {
     const tonApi: AxiosInstance = makeTonApi(TON_API_ENDPOINT, process.env.TONAPI_KEY);
     const tonClient: TonClient = await makeTonClient();
 
-    const evaaMaster = POOL_CONFIG.masterAddress === MAINNET_POOL_CONFIG.masterAddress ? EvaaMasterPyth : EvaaMasterClassic;
+    const evaaMaster = EVAA_CONTRACT_VERSIONS_MAP.get(POOL_CONFIG.masterAddress).master;
 
     const evaa: OpenedContract<EvaaMasterClassic | EvaaMasterPyth> =
       tonClient.open(

@@ -123,6 +123,11 @@ export async function handleTransactions(
       const evaaContractVersion = EVAA_CONTRACT_VERSIONS_MAP.get(
         evaa.poolConfig.masterAddress,
       );
+      if (!evaaContractVersion) {
+        throw new Error(
+          `Indexer: No version mapping found for master address ${evaa.poolConfig.masterAddress}`,
+        );
+      }
 
       if (
         before_lt >= evaaContractVersion.v4_upgrade_lt &&

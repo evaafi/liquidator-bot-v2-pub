@@ -1,13 +1,14 @@
-import { Address } from "@ton/core";
-import { sha256Hash } from "./util/crypto";
-
+import type { Address } from "@ton/core";
 import {
   ASSET_ID as _ASSET_ID,
+  EvaaMasterClassic,
+  EvaaMasterPyth,
   MAINNET_ALTS_POOL_CONFIG,
   MAINNET_LP_POOL_CONFIG,
   MAINNET_POOL_CONFIG,
   MAINNET_STABLE_POOL_CONFIG,
 } from "@evaafi/sdk";
+import { sha256Hash } from "./util/crypto";
 
 export const ASSET_ID = {
   ..._ASSET_ID,
@@ -73,6 +74,7 @@ export const EVAA_CONTRACT_VERSIONS_MAP = new Map<
   Address,
   {
     name: string;
+    master: typeof EvaaMasterPyth | typeof EvaaMasterClassic;
     v4_upgrade_lt: number;
     v9_upgrade_lt: number;
   }
@@ -81,6 +83,7 @@ export const EVAA_CONTRACT_VERSIONS_MAP = new Map<
     MAINNET_POOL_CONFIG.masterAddress,
     {
       name: "Main pool",
+      master: EvaaMasterPyth,
       v4_upgrade_lt: 49828980000001,
       v9_upgrade_lt: 61426459000001,
     },
@@ -89,6 +92,7 @@ export const EVAA_CONTRACT_VERSIONS_MAP = new Map<
     MAINNET_LP_POOL_CONFIG.masterAddress,
     {
       name: "LP pool",
+      master: EvaaMasterClassic,
       v4_upgrade_lt: 49712577000001,
       v9_upgrade_lt: 61359759000001,
     },
@@ -97,6 +101,7 @@ export const EVAA_CONTRACT_VERSIONS_MAP = new Map<
     MAINNET_ALTS_POOL_CONFIG.masterAddress,
     {
       name: "Alts pool",
+      master: EvaaMasterClassic,
       v4_upgrade_lt: 0,
       v9_upgrade_lt: 61187409000001,
     },
@@ -105,6 +110,7 @@ export const EVAA_CONTRACT_VERSIONS_MAP = new Map<
     MAINNET_STABLE_POOL_CONFIG.masterAddress,
     {
       name: "Stable pool",
+      master: EvaaMasterClassic,
       v4_upgrade_lt: 0,
       v9_upgrade_lt: 61359759000001,
     },
