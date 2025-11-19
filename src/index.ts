@@ -10,7 +10,7 @@ import {mnemonicToWalletKey} from "@ton/crypto";
 import * as https from "https";
 import {sleep} from "./util/process";
 import {clearInterval} from "node:timers";
-import {Evaa} from "@evaafi/sdk";
+import {EvaaMasterClassic, EvaaMasterPyth, MAINNET_POOL_CONFIG} from "@evaafi/sdk";
 import {retry} from "./util/retry";
 import {ChannelMessenger, logMessage, Messenger, TopicMessenger} from "./lib/messenger";
 import {HighloadWalletV2} from "./lib/highload_contract_v2";
@@ -30,14 +30,20 @@ function makeTonApi(endpoint, apiKey: string) {
 
 async function main(bot: Messenger) {
     configDotenv();
-    const poolConfig = POOL_CONFIG;
-    const db = new MyDatabase(poolConfig.poolAssetsConfig);
+    const db = new MyDatabase(POOL_CONFIG.poolAssetsConfig);
     await db.init(DB_PATH);
 
     const tonApi: AxiosInstance = makeTonApi(TON_API_ENDPOINT, process.env.TONAPI_KEY);
     const tonClient: TonClient = await makeTonClient();
-    const evaa: OpenedContract<Evaa> = tonClient.open(new Evaa({debug: IS_TESTNET, poolConfig}));
-    const evaaPriceCollector = evaa.createPriceCollector();
+
+    const evaaMaster = POOL_CONFIG.masterAddress === MAINNET_POOL_CONFIG.masterAddress ? EvaaMasterPyth : EvaaMasterClassic;
+
+    const evaa: OpenedContract<EvaaMasterClassic | EvaaMasterPyth> =
+      tonClient.open(
+        new evaaMaster({ debug: IS_TESTNET, poolConfig: POOL_CONFIG }),
+      );
+
+    const evaaPriceCollector = evaa.poolConfig.collector;
     const res = await retry(
         async () => await evaa.getSync(),
         {attempts: 10, attemptInterval: 5000}

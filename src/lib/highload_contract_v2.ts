@@ -3,9 +3,9 @@ import {Address, beginCell, Cell, ContractProvider, Dictionary, TonClient} from 
 import crypto from "crypto";
 import {sign} from "@ton/crypto";
 import {retry} from "../util/retry";
-import {internal, storeMessageRelaxed} from "@ton/core";
+import {Contract, internal, storeMessageRelaxed} from "@ton/core";
 
-const HIGHLOAD_CODE_V2: Cell = Cell.fromBase64('te6ccgEBCQEA5QABFP8A9KQT9LzyyAsBAgEgAgMCAUgEBQHq8oMI1xgg0x/TP/gjqh9TILnyY+1E0NMf0z/T//QE0VNggED0Dm+hMfJgUXO68qIH+QFUEIf5EPKjAvQE0fgAf44WIYAQ9HhvpSCYAtMH1DAB+wCRMuIBs+ZbgyWhyEA0gED0Q4rmMQHIyx8Tyz/L//QAye1UCAAE0DACASAGBwAXvZznaiaGmvmOuF/8AEG+X5dqJoaY+Y6Z/p/5j6AmipEEAgegc30JjJLb/JXdHxQANCCAQPSWb6VsEiCUMFMDud4gkzM2AZJsIeKz');
+export const HIGHLOAD_CODE_V2: Cell = Cell.fromBase64('te6ccgEBCQEA5QABFP8A9KQT9LzyyAsBAgEgAgMCAUgEBQHq8oMI1xgg0x/TP/gjqh9TILnyY+1E0NMf0z/T//QE0VNggED0Dm+hMfJgUXO68qIH+QFUEIf5EPKjAvQE0fgAf44WIYAQ9HhvpSCYAtMH1DAB+wCRMuIBs+ZbgyWhyEA0gED0Q4rmMQHIyx8Tyz/L//QAye1UCAAE0DACASAGBwAXvZznaiaGmvmOuF/8AEG+X5dqJoaY+Y6Z/p/5j6AmipEEAgegc30JjJLb/JXdHxQANCCAQPSWb6VsEiCUMFMDud4gkzM2AZJsIeKz');
 export const DEFAULT_SUBWALLET_ID = 698983191n;
 
 const ATTEMPTS_NUMBER: number = 3;
@@ -35,7 +35,7 @@ export function makeLiquidationCell(
         }))).endCell();
 }
 
-export class HighloadWalletV2 {
+export class HighloadWalletV2 implements Contract {
     _tonClient: TonClient;
     _address: Address;
     _subwalletId: bigint;
