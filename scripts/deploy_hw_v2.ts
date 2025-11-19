@@ -46,8 +46,15 @@ function createTransferMessage(
 }
 
 async function deployHWV2() {
+  if (!process.env.WALLET_PRIVATE_KEY) {
+    throw new Error("WALLET_PRIVATE_KEY environment variable is required");
+  }
+  if (!process.env.TONCENTER_API_KEY) {
+    throw new Error("TONCENTER_API_KEY environment variable is required");
+  }
+
   const WALLET_KEY_PAIR = await mnemonicToWalletKey(
-    process.env.WALLET_PRIVATE_KEY!.split(" "),
+    process.env.WALLET_PRIVATE_KEY.split(" "),
   );
 
   const WALLET_CONTRACT = TON_CLIENT.open(
