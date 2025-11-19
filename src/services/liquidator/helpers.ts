@@ -1,45 +1,59 @@
-import {WalletBalances} from "../../lib/balances";
-import {formatBalances, getFriendlyAmount} from "../../util/format";
+import type { OpenedContract } from "@ton/ton";
+import type { WalletBalances } from "../../lib/balances";
 import {
-    Evaa,
-    ExtendedAssetsConfig,
-    ExtendedAssetsData,
-    MasterConstants,
-    PoolAssetsConfig,
-    presentValue,
-    TON_MAINNET
+  type EvaaMasterClassic,
+  type EvaaMasterPyth,
+  type ExtendedAssetsConfig,
+  type ExtendedAssetsData,
+  type MasterConstants,
+  type PoolAssetConfig,
+  presentValue,
+  TON_MAINNET,
 } from "@evaafi/sdk";
-import {POOL_CONFIG} from "../../config";
-import {OpenedContract} from "@ton/ton";
+import { POOL_CONFIG } from "../../config";
+import { formatBalances, getFriendlyAmount } from "../../util/format";
 
 type TaskMinimal = {
-    id: number,
-    loan_asset: bigint,
-    liquidation_amount: bigint,
-}
+  id: number;
+  loan_asset: bigint;
+  liquidation_amount: bigint;
+};
 
-export function formatNotEnoughBalanceMessage<Task extends TaskMinimal>(task: Task, balance: WalletBalances, extAssetsConfig: ExtendedAssetsConfig, poolAssetsConfig: PoolAssetsConfig) {
-    const assets = POOL_CONFIG.poolAssetsConfig;
-    const loan_asset = assets.find(asset => (asset.assetId === task.loan_asset));
-    if (!loan_asset) throw (`${task.loan_asset} is not supported`);
+export function formatNotEnoughBalanceMessage<Task extends TaskMinimal>(
+  task: Task,
+  balance: WalletBalances,
+  extAssetsConfig: ExtendedAssetsConfig,
+  poolAssetsConfig: PoolAssetConfig[],
+) {
+  const assets = POOL_CONFIG.poolAssetsConfig;
+  const loan_asset = assets.find((asset) => asset.assetId === task.loan_asset);
+  if (!loan_asset) throw `${task.loan_asset} is not supported`;
 
-    const formattedBalances = formatBalances(balance, extAssetsConfig, poolAssetsConfig);
-    const loan_config = extAssetsConfig.get(task.loan_asset);
-    if (!loan_config) throw (`No config for asset ${task.loan_asset}`);
+  const formattedBalances = formatBalances(
+    balance,
+    extAssetsConfig,
+    poolAssetsConfig,
+  );
+  const loan_config = extAssetsConfig.get(task.loan_asset);
+  if (!loan_config) throw `No config for asset ${task.loan_asset}`;
 
-    return `
+  return `
 ❌ Not enough balance for liquidation task ${task.id}
 
 <b>Loan asset:</b> ${loan_asset.name}
-<b>Liquidation amount:</b> ${getFriendlyAmount(task.liquidation_amount, loan_config.decimals, loan_asset.name)}
+<b>Liquidation amount:</b> ${getFriendlyAmount(
+    task.liquidation_amount,
+    loan_config.decimals,
+    loan_asset.name,
+  )}
 <b>My balance:</b>
 ${formattedBalances}`;
 }
 
 export type Log = {
-    id: number,
-    walletAddress: string,
-}
+  id: number;
+  walletAddress: string;
+};
 
 /**
  * Calculates asset dust amount
@@ -49,20 +63,27 @@ export type Log = {
  * @param masterConstants master constants
  */
 export function calculateDust(
-    assetId: bigint,
-    assetsConfigDict: ExtendedAssetsConfig,
-    assetsDataDict: ExtendedAssetsData,
-    masterConstants: MasterConstants) {
+  assetId: bigint,
+  assetsConfigDict: ExtendedAssetsConfig,
+  assetsDataDict: ExtendedAssetsData,
+  masterConstants: MasterConstants,
+) {
+  const data = assetsDataDict.get(assetId)!;
+  const config = assetsConfigDict.get(assetId)!;
 
-    const data = assetsDataDict.get(assetId)!;
-    const config = assetsConfigDict.get(assetId)!;
-
-    const dustPresent = presentValue(data.sRate, data.bRate, config.dust, masterConstants);
-    return dustPresent.amount;
+  const dustPresent = presentValue(
+    data.sRate,
+    data.bRate,
+    config.dust,
+    masterConstants,
+  );
+  return dustPresent.amount;
 }
 
-export function getJettonIDs(evaa: OpenedContract<Evaa>): bigint[] {
-    return evaa.poolConfig.poolAssetsConfig
-        .filter(asset => asset.assetId !== TON_MAINNET.assetId)
-        .map(asset => asset.assetId);
+export function getJettonIDs(
+  evaa: OpenedContract<EvaaMasterClassic | EvaaMasterPyth>,
+): bigint[] {
+  return evaa.poolConfig.poolAssetsConfig
+    .filter((asset) => asset.assetId !== TON_MAINNET.assetId)
+    .map((asset) => asset.assetId);
 }

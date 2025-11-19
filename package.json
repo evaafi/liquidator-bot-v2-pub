@@ -23,12 +23,12 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "@evaafi/sdk": "^0.6.2-b",
+    "@evaafi/sdk": "^0.9.2-a",
     "@iota/sdk": "^1.1.0",
     "@orbs-network/ton-access": "^2.3.3",
     "@ton/core": "0.56.0",
-    "@ton/crypto": "^3.2.0",
-    "@ton/ton": "^14.0.0",
+    "@ton/crypto": "3.3.0",
+    "@ton/ton": "14.0.0",
     "@tonconnect/sdk": "^3.0.5",
     "axios": "^1.5.1",
     "crypto-js": "^4.2.0",

@@ -1,9 +1,9 @@
-import {Database, open} from "sqlite";
-import sqlite3 from 'sqlite3';
-import {emptyPrincipals, PrincipalsDict, Task, User} from "./types";
-import {retry} from "../util/retry";
-import {PoolAssetConfig} from "@evaafi/sdk";
-import {makeCreateUsersScript, makeProcessUserScript} from "./helpers";
+import { PoolAssetConfig } from "@evaafi/sdk"
+import { Database, open } from "sqlite"
+import sqlite3 from 'sqlite3'
+import { retry } from "../util/retry"
+import { makeCreateUsersScript, makeProcessUserScript } from "./helpers"
+import { emptyPrincipals, PrincipalsDict, Task, User } from "./types"
 
 const seconds = (s: number) => s * 1000;
 
@@ -36,9 +36,25 @@ export class MyDatabase {
         this.COLUMNS.forEach((col, index) => {
             const id = this.ASSET_IDS[index];
             const amount = row[col];
-            principals.set(id, BigInt(amount).valueOf());
+            const parsed = this.toBigIntSafe(amount);
+            principals.set(id, parsed);
         });
         return principals;
+    }
+
+    private toBigIntSafe(value: unknown): bigint {
+        if (value === null || value === undefined) return 0n;
+        if (typeof value === 'bigint') return value;
+        const s = String(value).trim();
+        if (s.length === 0) return 0n;
+        // Strip any fractional part if present (e.g., "1762508457418.0")
+        const match = s.match(/^-?\d+/);
+        const intPart = match ? match[0] : '0';
+        try {
+            return BigInt(intPart);
+        } catch {
+            return 0n;
+        }
     }
 
     constructor(poolAssetsConfig: PoolAssetConfig[]) {
@@ -93,6 +109,7 @@ export class MyDatabase {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 wallet_address VARCHAR NOT NULL,
                 contract_address VARCHAR NOT NULL,
+                subaccountId VARCHAR NOT NULL,
                 created_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP NOT NULL,
                 loan_asset VARCHAR NOT NULL,
@@ -175,9 +192,18 @@ export class MyDatabase {
 
         const row = result.value;
         const principals = this.fetchDbPrincipals(row);
-        const {id, wallet_address, code_version, created_at, updated_at, actualized_at, state} = row;
+        const {
+          id,
+          wallet_address,
+          subaccountId,
+          code_version,
+          created_at,
+          updated_at,
+          actualized_at,
+          state,
+        } = row;
         return {
-            id, wallet_address, contract_address,
+            id, wallet_address, contract_address, subaccountId,
             code_version, created_at, updated_at, actualized_at,
             principals, state,
         }
@@ -197,7 +223,7 @@ export class MyDatabase {
     async insertOrUpdateUser(user: User) {
         const _principals = this.mapPrincipals(user.principals);
         const insertParameters = [
-            user.wallet_address, user.contract_address,
+            user.wallet_address, user.contract_address, user.subaccountId,
             user.code_version, user.created_at, user.updated_at, user.actualized_at,
             ..._principals
         ];
@@ -237,6 +263,7 @@ export class MyDatabase {
                 id,
                 wallet_address,
                 contract_address,
+                subaccountId,
                 code_version,
                 created_at,
                 actualized_at,
@@ -244,7 +271,7 @@ export class MyDatabase {
                 state
             } = row;
             users.push({
-                id, wallet_address, contract_address,
+                id, wallet_address, contract_address, subaccountId,
                 code_version, created_at, updated_at, actualized_at,
                 principals, state,
             });
@@ -253,14 +280,14 @@ export class MyDatabase {
         return users;
     }
 
-    async addTask(walletAddress: string, contractAddress: string, createdAt: number, loanAsset: bigint,
+    async addTask(walletAddress: string, contractAddress: string, subaccountId: number, createdAt: number, loanAsset: bigint,
                   collateralAsset: bigint, liquidationAmount: bigint, minCollateralAmount: bigint,
                   pricesCell: string, queryID: bigint) {
         await this.db.run(`
-            INSERT INTO liquidation_tasks(wallet_address, contract_address, created_at, updated_at, loan_asset, 
+            INSERT INTO liquidation_tasks(wallet_address, contract_address, subaccountId, created_at, updated_at, loan_asset, 
                 collateral_asset, liquidation_amount, min_collateral_amount, prices_cell, query_id
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            walletAddress, contractAddress, createdAt, createdAt,
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            walletAddress, contractAddress, subaccountId.toString(), createdAt, createdAt,
             loanAsset.toString(), collateralAsset.toString(), liquidationAmount.toString(), minCollateralAmount.toString(),
             pricesCell, queryID.toString()
         )
@@ -282,6 +309,7 @@ export class MyDatabase {
                 id: row.id,
                 wallet_address: row.wallet_address,
                 contract_address: row.contract_address,
+                subaccountId: row.subaccountId,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
                 loan_asset: BigInt(row.loan_asset),
@@ -335,6 +363,7 @@ export class MyDatabase {
             id: task.id,
             wallet_address: task.wallet_address,
             contract_address: task.contract_address,
+            subaccountId: task.subaccountId,
             created_at: task.created_at,
             updated_at: task.updated_at,
             loan_asset: BigInt(task.loan_asset),

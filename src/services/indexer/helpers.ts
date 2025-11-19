@@ -1,12 +1,12 @@
-import {Address, Slice} from "@ton/core";
-import {BANNED_ASSETS_FROM, BANNED_ASSETS_TO, MIN_WORTH_SWAP_LIMIT} from "../../config";
-import {Evaa, ExtendedAssetsConfig, PoolAssetsConfig, PoolConfig} from "@evaafi/sdk";
-import {Cell, Dictionary, OpenedContract} from "@ton/ton";
-import {sleep} from "../../util/process";
-import {formatBalances, getAddressFriendly, getFriendlyAmount} from "../../util/format";
-import {Task} from "../../db/types";
-import {WalletBalances} from "../../lib/balances";
-import {logMessage} from "../../lib/messenger";
+import { EvaaMasterClassic, EvaaMasterPyth, ExtendedAssetsConfig, PoolAssetConfig, PoolConfig } from "@evaafi/sdk"
+import { Address, Slice } from "@ton/core"
+import { Cell, Dictionary, OpenedContract } from "@ton/ton"
+import { BANNED_ASSETS_FROM, BANNED_ASSETS_TO, MIN_WORTH_SWAP_LIMIT } from "../../config"
+import { Task } from "../../db/types"
+import { WalletBalances } from "../../lib/balances"
+import { logMessage } from "../../lib/messenger"
+import { formatBalances, getAddressFriendly, getFriendlyAmount } from "../../util/format"
+import { sleep } from "../../util/process"
 
 export function makeGetAccountTransactionsRequest(address: Address, before_lt: number) {
     if (before_lt === 0)
@@ -105,10 +105,7 @@ export const ERROR_CODE = {
     LIQUIDATION_EXECUTION_CRASHED: 0x31FE,
 }
 
-export const OP_CODE = {
-    MASTER_SUPPLY: 0x1,
-    MASTER_WITHDRAW: 0x2,
-    MASTER_LIQUIDATE: 0x3,
+export const OP_CODE_SHARED = {
     JETTON_TRANSFER_NOTIFICATION: 0x7362d09c,
     JETTON_TRANSFER_INTERNAL: 0x7362d09c,
     DEBUG_PRINCIPALS: 0xd2,
@@ -118,7 +115,22 @@ export const OP_CODE = {
     MASTER_LIQUIDATE_SATISFIED: 0x311,
     USER_LIQUIDATE_SUCCESS: 0x311a,
     MASTER_LIQUIDATE_UNSATISFIED: 0x31f,
+};
+
+export const OP_CODE_V4 = {
+    MASTER_SUPPLY: 0x1,
+    MASTER_WITHDRAW: 0x2,
+    MASTER_LIQUIDATE: 0x3,
+    ...OP_CODE_SHARED
 }
+
+export const OP_CODE_V9 = {
+    MASTER_SUPPLY: 0x1,
+    MASTER_SUPPLY_WITHDRAW: 0x4,
+    MASTER_LIQUIDATE: 0x3,
+    SUPPLY_WITHDRAW_SUCCESS: 0x16,
+    ...OP_CODE_SHARED,
+};
 
 export function getErrorDescription(errorId: number): string {
     return ERROR_DESCRIPTIONS.get(errorId) ?? 'Unknown error';
@@ -151,7 +163,7 @@ export function formatLiquidationSuccess(
     txHash: string, txTime: Date, masterAddress: Address,
     myBalance: WalletBalances,
     assetsConfig: ExtendedAssetsConfig,
-    poolAssetsConfig: PoolAssetsConfig,
+    poolAssetsConfig: PoolAssetConfig[],
     prices: Dictionary<bigint, bigint>) {
     const {liquidatableAmount, protocolGift, collateralRewardAmount} = parsedTx;
 
@@ -219,7 +231,7 @@ export function formatSwapCanceledMessage(loanInfo: AssetInfo, collateralInfo: A
 
 export type AssetInfo = { name: string, decimals: bigint, scale: bigint }
 
-export function getAssetInfo(assetId: bigint, evaa: OpenedContract<Evaa>): AssetInfo {
+export function getAssetInfo(assetId: bigint, evaa: OpenedContract<EvaaMasterClassic | EvaaMasterPyth>): AssetInfo {
     const assetPoolConfig = evaa.poolConfig.poolAssetsConfig.find(it => it.assetId === assetId);
     // throw ok, because no pool config or no data means poll misconfiguration
     if (!assetPoolConfig) throw (`Asset ${assetId} is not supported`);

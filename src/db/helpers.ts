@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users(
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 wallet_address VARCHAR NOT NULL,
 contract_address VARCHAR UNIQUE NOT NULL,
+subaccountId INTEGER NOT NULL,
 code_version INTEGER NOT NULL,
 created_at TIMESTAMP NOT NULL,
 updated_at TIMESTAMP NOT NULL,
@@ -21,9 +22,9 @@ export function makeProcessUserScript(columns: string[]): string {
     console.log('principals_insert_cols: ', principal_insert_cols);
     return `
 INSERT INTO users(
-wallet_address, contract_address, code_version, created_at, updated_at, actualized_at,
+wallet_address, contract_address, subaccountId, code_version, created_at, updated_at, actualized_at,
 ${columns.map(name => `${name}`).join(', ')})
-VALUES(${repeatStr('?', 6 + columns.length).join(', ')})
+VALUES(${repeatStr('?', 7 + columns.length).join(', ')})
 ON CONFLICT(contract_address) DO UPDATE SET 
 code_version = CASE WHEN actualized_at < ? THEN ? ELSE code_version END, 
 created_at = CASE WHEN created_at > ? THEN ? ELSE created_at END, 

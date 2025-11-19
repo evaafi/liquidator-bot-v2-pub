@@ -122,11 +122,17 @@ export async function addLiquidationTask(
     // db might be busy, retry 5 times, wait 1 sec before retry
     const res = await retry(async () => {
             await db.addTask(
-                user.wallet_address, user.contract_address, Date.now(),
-                loanAssetId, collateralAssetId,
-                liquidationAmount, minCollateralAmount,
-                pricesCell.toBoc().toString('base64'),
-                queryID);
+              user.wallet_address,
+              user.contract_address,
+              user.subaccountId,
+              Date.now(),
+              loanAssetId,
+              collateralAssetId,
+              liquidationAmount,
+              minCollateralAmount,
+              pricesCell.toBoc().toString("base64"),
+              queryID
+            );
         }, {attempts: 5, attemptInterval: 1000}
     );
 

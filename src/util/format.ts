@@ -2,7 +2,7 @@ import {Address} from "@ton/core";
 import {IS_TESTNET} from "../config";
 import {WalletBalances} from "../lib/balances";
 import {Dictionary} from "@ton/ton";
-import {ExtendedAssetsConfig, PoolAssetsConfig} from "@evaafi/sdk";
+import {ExtendedAssetsConfig, PoolAssetConfig} from "@evaafi/sdk";
 
 export function getAddressFriendly(addr: Address) {
     return IS_TESTNET ?
@@ -23,15 +23,25 @@ export function getFriendlyAmount(amount: bigint, decimals: bigint, name: string
     return amt.toFixed(2) + " " + name;
 }
 
-export function formatBalances(balances: WalletBalances, extAssetsConfig: ExtendedAssetsConfig, poolAssetsConfig: PoolAssetsConfig) {
-    return poolAssetsConfig.map(asset => {
-        const assetConfig = extAssetsConfig.get(asset.assetId);
-        if (!assetConfig) throw (`No config for asset ${asset.assetId}`);
-        const decimals: bigint = assetConfig.decimals;
-        const balance: bigint = balances.get(asset.assetId) ?? 0n;
-        const name = asset.name;
-        return `<b>- ${asset.name}:</b> ${getFriendlyAmount(balance, decimals, name)}`;
-    }).join('\n');
+export function formatBalances(
+  balances: WalletBalances,
+  extAssetsConfig: ExtendedAssetsConfig,
+  poolAssetsConfig: PoolAssetConfig[]
+) {
+  return poolAssetsConfig
+    .map((asset) => {
+      const assetConfig = extAssetsConfig.get(asset.assetId);
+      if (!assetConfig) throw `No config for asset ${asset.assetId}`;
+      const decimals: bigint = assetConfig.decimals;
+      const balance: bigint = balances.get(asset.assetId) ?? 0n;
+      const name = asset.name;
+      return `<b>- ${asset.name}:</b> ${getFriendlyAmount(
+        balance,
+        decimals,
+        name
+      )}`;
+    })
+    .join("\n");
 }
 
 export function printPrices(prices: Dictionary<bigint, bigint>) {
