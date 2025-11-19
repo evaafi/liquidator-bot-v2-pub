@@ -494,7 +494,8 @@ export async function handleTransactions(
           wallet_address:
             user?.wallet_address ?? getAddressFriendly(userAddress),
           contract_address: user?.contract_address ?? userContractFriendly,
-          subaccountId,
+          subaccountId:
+            subaccountId !== 0 ? subaccountId : (user?.subaccountId ?? 0), // backward compability for old EVAA tx's
           code_version: codeVersion,
           created_at: Math.min(utime, user?.created_at ?? Date.now()),
           updated_at: Math.max(utime, user?.updated_at ?? 0),
