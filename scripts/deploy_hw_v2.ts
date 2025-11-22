@@ -78,6 +78,7 @@ async function deployHWV2() {
 
   await WALLET_CONTRACT.sender(WALLET_KEY_PAIR.secretKey).send({
     to: HWV2_ADDRESS,
+    init: HWV2_STATE,
     value: toNano("0.5"),
   });
 
@@ -93,7 +94,7 @@ async function deployHWV2() {
   highloadMessages.set(
     0,
     createTransferMessage(
-      Address.parse("UQCsg2ebW92NaprS7djOHqDn0yytfKPd1ZnyN-t6TartT5VP"),
+      WALLET_CONTRACT.address,
       toNano("0.01"),
     ),
   );
